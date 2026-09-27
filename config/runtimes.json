@@ -1,0 +1,60 @@
+{
+  "_readme": [
+    "RUNTIME REGISTRY - the list of things that can actually execute an agent.",
+    "",
+    "An agent is a role: a name, a mission, a SOUL.md and a set of tests.",
+    "A runtime is the program that executes it. This project keeps those two",
+    "things separate on purpose, so you can change one without touching the",
+    "other. If your runtime turns out to be bad at something, you swap the",
+    "runtime and the agent's identity, tests and place in the org stay put.",
+    "",
+    "Only WORKING runtimes belong in 'runtimes' below. An agent.conf naming",
+    "anything not listed here is an error, not a silent fallback - a test run",
+    "that quietly used a different engine than you thought is worse than no run",
+    "at all. Things you intend to try go in 'planned', which is documentation,",
+    "not configuration.",
+    "",
+    "To add a runtime:",
+    "",
+    "  1. write  _rt_<id>_probe  and  _rt_<id>_chat  in lib/runtime.sh",
+    "  2. add an entry here with the same <id>",
+    "  3. set AGENT_RUNTIME=\"<id>\" in the agents that should use it",
+    "",
+    "Nothing else in the project changes. That is the whole point."
+  ],
+
+  "runtimes": {
+    "ollama": {
+      "status": "ready",
+      "transport": "ollama-chat",
+      "endpoint": "$AI_OLLAMA_URL",
+      "supports_think": true,
+      "last_tested": "2026-09-25",
+      "strengths": [
+        "one model server for the whole house",
+        "no API key, no account, no bill",
+        "works with the network unplugged"
+      ],
+      "weaknesses": [
+        "quality ceiling is set by your VRAM",
+        "one GPU is shared, so agents queue behind each other"
+      ],
+      "notes": [
+        "The default. The model is NOT chosen here - AGENT_MODEL_ROLE picks a",
+        "role from config/models.json and the resolver picks a model that fits",
+        "your card. This entry only says how to talk to the model server."
+      ]
+    }
+  },
+
+  "planned": {
+    "_comment": [
+      "Candidates, in the order they are worth trying. None of these work yet.",
+      "Do not put them in an agent.conf until they are in 'runtimes' above",
+      "with a real adapter behind them."
+    ],
+    "opencode": "Agentic coding runtime. Good for the coder agent's real work, weak as a plain chat backend for a test sweep.",
+    "hermes": "General autonomous agent runtime. Candidate once there is an org to coordinate.",
+    "remote-openai-compatible": "Any /v1/chat/completions endpoint. This is how the free hosted tiers in config/models.json would be reached. Note that prompts then leave the machine, which is why they are gated behind AI_ALLOW_REMOTE."
+  }
+}

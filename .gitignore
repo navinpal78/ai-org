@@ -1,0 +1,41 @@
+# Bytecode caches. The test suite disables these itself (sys.dont_write_bytecode),
+# so this is belt and braces for ad-hoc python3 invocations.
+__pycache__/
+*.pyc
+
+# The research index is built by tools/ingest.py and is not source. It can be
+# large, and it is a cache of other people's pages, so it should never be
+# committed. Re-create it with:  tools/ingest.py --url <page>
+state/research/index.db
+state/research/index.db-*
+
+# state/audit.log IS tracked: it is the record of what ran, and the project
+# treats it as the trustworthy source over AGENT_LAST_SCORE in any agent.conf.
+# Everything else under state/ is generated and disposable.
+state/profile/
+
+# ...which includes these two, and the comment above was claiming it before the
+# rules did. Both are rewritten by every ./bootstrap.sh detect, so committing them
+# means a spurious diff on every hardware change AND - worse - it presents one
+# machine's profile as the project's configuration. profile.env on this box
+# records an i5-5300U with no GPU and AI_TIER="cpu", which is the single knob
+# every model decision keys off. On the A5000 it would be wrong immediately.
+state/detect-history.log
+state/previous-tier
+
+# config/models.env and config/profile.env are the same category one level up,
+# and are excluded for the same reason plus one more: they are both stamped
+# GENERATED - do not edit by hand, and rule 2 already says never edit them.
+# Their absence is not silent breakage. A fresh clone reports one warning per
+# agent saying "run ./bootstrap.sh detect" and exits non-zero, so the first
+# command a new machine runs tells it what to do. Verified by deleting both from
+# a copy of the tree: 16 actionable warnings, then 359 assertions and the one
+# known error after detect. A missing file that names its own fix is better
+# than a committed file that is confidently wrong on every other machine.
+config/models.env
+config/profile.env
+
+# config/hardware.json is NOT excluded, and the distinction is worth keeping:
+# it is hand-authored and records the card being planned FOR, not the card this
+# machine happens to have. Its "release" field does leak the local kernel
+# string, which is harmless and not worth losing the file over.

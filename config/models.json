@@ -1,0 +1,330 @@
+{
+  "_readme": [
+    "ROLE-BASED MODEL CATALOG - not a hardware ladder.",
+    "",
+    "Each role describes WHAT a model is for. Each candidate is listed",
+    "largest-first with the VRAM it actually needs (weights + a realistic",
+    "KV cache for the context length your tier will request).",
+    "",
+    "The resolver picks the LARGEST candidate that fits your detected VRAM.",
+    "Nothing in any script hardcodes a model name. Upgrade the GPU, re-run",
+    "'./bootstrap.sh detect', and every role re-resolves to a bigger model.",
+    "",
+    "To change models, edit this file and run './bootstrap.sh models'.",
+    "To try a model the resolver did not pick, run:  ollama run <tag>",
+    "",
+    "vram_gb  = VRAM needed in GB. Must be a realistic figure, not just",
+    "           the size of the weights file. Overstate it and the resolver",
+    "           picks something that will not load; understate it and you get",
+    "           mysterious out-of-memory kills mid-task.",
+    "remote   = true means it is a hosted free-tier endpoint, not a local",
+    "           model. Only used when AI_ALLOW_REMOTE=true, because remote",
+    "           means your prompts leave the machine."
+  ],
+
+  "fit": {
+    "_comment": "Margin rules, applied to fit_ratio = vram_gb / usable_vram_gb",
+    "comfortable_max": 0.75,
+    "tight_max": 0.92
+  },
+
+  "roles": {
+    "coding": {
+      "description": "Writes, edits, debugs and reviews code. The workhorse for agent 4.",
+      "candidates": [
+        { "model": "qwen3-coder-next:latest", "vram_gb": 54, "notes": "Was listed as `qwen3-coder-next:80b`, which is not a real tag. The repo is real and ships exactly ONE tag, `latest`, at 51.7GB of weights (measured from the registry manifest, 2026-09-27); `:80b`, `:30b`, `:80b-a3b` and `:instruct` all 404. Kept the 54GB figure, which is conservative against 51.7GB of weights. Two caveats worth knowing: it is a FLOATING tag, so this verification goes stale if the publisher ever repoints `latest`; and `thinks` is deliberately left unrecorded, because guessing would be worse than the warning - unrecorded is treated as cannot-think, and `tools/check-models.sh` can confirm it on a machine that has it pulled. It can only ever be selected on a card with ~65GB usable, so it changes nothing at or below 48GB." },
+        { "model": "qwen3-coder:30b",      "vram_gb": 21, "notes": "The default local coder. 256K context, Apache 2.0, strong tool calling." },
+        { "model": "devstral:24b",      "vram_gb": 16, "notes": "Mistral 24B built for software-engineering agents. Comfortable on a 24GB card. Was listed as `devstral-small`, which is not a real Ollama tag - the library ships devstral:24b (14GB of weights) and the `24b-small-2505-*` quant variants of the same digest. Verified against the registry 2026-09-26." },
+        { "model": "qwen2.5-coder:14b",    "vram_gb": 10, "thinks": false, "notes": "Solid small-repo coder." },
+        { "model": "qwen2.5-coder:7b",     "vram_gb": 6, "thinks": false,  "notes": "Autocomplete and one-file edits only." }
+      ]
+    },
+
+    "reasoning": {
+      "description": "Judgement calls and planning. Agents 3 (CTO), 6 (security), 8 (CEO).",
+      "_low_vram_and_family_order": [
+        "This ladder carries a second model FAMILY below 20GB, and that is the",
+        "whole point of the three non-Qwen entries. The auditor role is",
+        "deliberately Qwen-only, so on a small card both roles used to collapse",
+        "onto the same Qwen tag - a collision the independence check reports as",
+        "an error. Adding family here rather than there is a deliberate choice:",
+        "the resolver takes the LARGEST candidate that fits, so a new auditor",
+        "entry large enough to win on a 16GB card would ALSO win on a 20GB and",
+        "24GB card, changing the validated design target. An entry on `reasoning`",
+        "of 10GB or less cannot disturb 20GB+, because gpt-oss:20b (14GB) still",
+        "outranks it there. So the cheap cards get fixed for free and the 24GB",
+        "behaviour is byte-identical to before.",
+        "",
+        "DECLARATION ORDER IS LOADED below. Where two candidates tie on vram_gb,",
+        "resolve_models.py sorts on vram_gb alone and Python's sort is stable, so",
+        "the entry written FIRST wins the tie. `phi4:14b` precedes `qwen3:14b` so",
+        "the CTO leaves the auditor's weights at 16GB, and `llama3.1:8b` precedes",
+        "`qwen3:8b` for the same reason at 8GB. Reversing either pair re-creates",
+        "the collision silently and nothing else in the tree would notice."
+      ],
+      "candidates": [
+        { "model": "qwen3:32b",     "vram_gb": 23, "thinks": true, "notes": "Best quality that still fits a 32GB card." },
+        { "model": "gpt-oss:20b",   "vram_gb": 14, "thinks": true, "notes": "MoE, very fast, good tool calling. The pick for 20GB and 24GB cards." },
+        { "model": "phi4:14b",      "vram_gb": 10, "thinks": false, "notes": "Microsoft, MIT. Reasoning-trained, so it earns its place here rather than in fast. Wins at 16GB, where gpt-oss:20b no longer fits and qwen3:14b is the auditor's tag." },
+        { "model": "qwen3:14b",     "vram_gb": 10, "thinks": true, "notes": "Acceptable for planning if you keep tasks scoped. Second in this role on a 16GB card only because of declaration order, not because it is worse." },
+        { "model": "gemma3:12b",    "vram_gb": 9, "thinks": false,  "notes": "Google, custom licence. Wins at 12GB, where 10GB is too tight to be eligible. Keeps the auditor on qwen3:8b." },
+        { "model": "llama3.1:8b",   "vram_gb": 6, "thinks": false,  "notes": "Meta, Llama licence. Wins at 8GB, tied on size with qwen3:8b and ahead of it only by declaration order." },
+        { "model": "qwen3:8b",      "vram_gb": 6, "thinks": true,  "notes": "Will follow a playbook but should not be trusted with architecture." }
+      ]
+    },
+
+    "adversarial-review": {
+      "description": "Auditing a peer agent rather than doing the work. Deliberately a DIFFERENT MODEL FAMILY from `reasoning` - see the note below.",
+      "_why_a_separate_role": [
+        "On a 24GB card, `reasoning` resolves to gpt-oss:20b, and so does every",
+        "other role that wants judgement. That put 11 of the 14 agents on one set",
+        "of weights - including security-engineer, cto and ceo, whose entire job",
+        "is to disagree with each other. An auditor, an audited party and an",
+        "arbitrator sharing identical weights is not a second opinion; it is one",
+        "opinion counted three times.",
+        "",
+        "So this role exists to break that tie, and the candidate list is",
+        "restricted to a different family on purpose. Adding a gpt-oss candidate",
+        "here would silently restore the monoculture, so don't - if you need a",
+        "bigger model for this role, add a bigger model from the SAME family.",
+        "",
+        "security-engineer is the only agent on this role. It is the one whose",
+        "value is disagreeing, which is why it is the one worth spending the",
+        "capability on. Note the trade: qwen3:14b is a 14B dense model where",
+        "gpt-oss:20b is a 20B MoE, so the auditor gives up some depth. That is",
+        "accepted because the role is refusal-and-report behaviour, not deep",
+        "vulnerability analysis, and independence is worth more here than depth.",
+        "",
+        "tools/check-agents.py warns when an agent shares a model role with the",
+        "agent it reports to, so this cannot regress quietly."
+      ],
+      "candidates": [
+        { "model": "qwen3:32b",   "vram_gb": 23, "thinks": true, "notes": "Same family, bigger. Needs a 32GB card; on a 24GB card it does not fit." },
+        { "model": "qwen3:14b",   "vram_gb": 10, "thinks": true, "notes": "The pick for a 24GB card. Different family from reasoning, so a genuinely different answer." },
+        { "model": "qwen3:8b",    "vram_gb": 6, "thinks": true,  "notes": "Floor. Weaker, but still not the model the CTO runs on." }
+      ]
+    },
+
+    "adjudication": {
+      "description": "Arbitrating between agents that disagree. Deliberately a DIFFERENT MODEL FAMILY from `reasoning` and from `evidence-review` - see the note below.",
+      "_why_a_separate_role": [
+        "Same defect as `adversarial-review`, one layer up, and it was just as",
+        "invisible. `ceo` sat on `reasoning`, which resolves to gpt-oss:20b on a",
+        "24GB card - the same weights as `cto`, the agent it arbitrates, and as",
+        "`research-officer`, the other agent it arbitrates. An arbitrator on the",
+        "audited party's weights is not arbitrating; it is agreeing, and the",
+        "agreement is then recorded as a decision.",
+        "",
+        "Family is DeepSeek, which appears nowhere else in the catalog. Do not add",
+        "a gpt-oss, Qwen or Mistral candidate here: any of those would restore the",
+        "convergence this role exists to prevent. If you need a bigger model for",
+        "this role, add a bigger DeepSeek.",
+        "",
+        "The trade, stated plainly: on a 24GB card the CEO drops from a 20B MoE to",
+        "a 14B dense reasoning model. It is a real loss of breadth, and it is",
+        "accepted for the same reason the auditor's was - the job is weighing two",
+        "positions and naming the tie-break, not knowing more facts than either",
+        "side. Being separable is worth more here than being bigger.",
+        "",
+        "This role also happens to fix the ceo/cto collision in the 28-48GB band,",
+        "which was previously unfixable by editing `reasoning` alone: at 32GB,",
+        "`reasoning` resolves to qwen3:32b (23GB) while this role resolves to",
+        "deepseek-r1:32b (20GB), so the arbitrator stays separable there too."
+      ],
+      "candidates": [
+        { "model": "deepseek-r1:32b", "vram_gb": 20, "thinks": true, "notes": "Top rung. 19.9GB of weights, so it needs a 28GB card - at 24GB it is 0.93 and does not fit." },
+        { "model": "deepseek-r1:14b", "vram_gb": 10, "thinks": true, "notes": "The pick for 14-24GB cards. 9.0GB of weights." },
+        { "model": "deepseek-r1:8b",  "vram_gb": 5, "thinks": true,  "notes": "Floor for 8-12GB cards. Deliberately under 6GB so it cannot win a tie against reasoning's qwen3:8b at any size." }
+      ]
+    },
+
+    "evidence-review": {
+      "description": "Judging the strength of evidence other agents gathered. Deliberately a DIFFERENT MODEL FAMILY from `reasoning` - see the note below.",
+      "_why_a_separate_role": [
+        "`research-officer` commissions research and then judges it, and it was",
+        "on `reasoning` - the same role, and so the same gpt-oss:20b weights, as",
+        "all four of the specialists whose work it grades. This is the sharpest",
+        "form of the monoculture in the tree: judging evidence strength is the",
+        "officer's entire stated function, and it shared weights with every",
+        "researcher it was grading.",
+        "",
+        "Note this is NOT the blanket parent-must-differ- from-child rule that was",
+        "tried and reverted, where 8 of 14 agents were made to differ from the",
+        "officer they report to for no reason. An engineer reporting to a manager",
+        "sharing a model is fine. An evidence *grader* sharing weights with the",
+        "evidence it grades is the exact thing `adversarial-review` was built to",
+        "prevent, so this declaration is on the officer only, and names the four",
+        "specialists explicitly.",
+        "",
+        "Family is Cohere, unused elsewhere. Command models are built for",
+        "grounded, cited work, which is the job. The cost is a real capability",
+        "cliff: command-r:35b (18.7GB of weights) only fits a 24GB card, so a 20GB",
+        "card drops this role to aya-expanse:8b. That is accepted rather than",
+        "smoothed over, because a small distinct model beats a large identical one."
+      ],
+      "candidates": [
+        { "model": "command-r:35b",   "vram_gb": 19, "thinks": false, "notes": "The pick for a 24GB card. 18.7GB of weights, so 0.88 of usable - tight but legal." },
+        { "model": "aya-expanse:8b",  "vram_gb": 5, "thinks": false,  "notes": "Floor for 20GB and below. 5.1GB of weights. Weaker, and a big step down - see the cliff above." }
+      ]
+    },
+
+    "fast": {
+      "description": "Short, high-volume turns. Agent 7 (helpdesk), routing, triage.",
+      "candidates": [
+        { "model": "qwen3:14b", "vram_gb": 10, "thinks": true, "notes": "Good quality-to-latency for a busy helpdesk." },
+        { "model": "qwen3:8b",  "vram_gb": 6, "thinks": true,  "notes": "Fast and cheap. Fine for most support replies." },
+        { "model": "qwen3:4b",  "vram_gb": 3.5, "thinks": true,"notes": "Classification and routing only." }
+      ]
+    },
+
+    "narrative": {
+      "description": "Long-form writing. Agent 13 (stories), scripts for agent 12.",
+      "candidates": [
+        { "model": "qwen3:32b",   "vram_gb": 23, "thinks": true, "notes": "Noticeably better prose and structure than smaller models." },
+        { "model": "gpt-oss:20b", "vram_gb": 14, "thinks": true, "notes": "Fine for drafting; revise the prose yourself." },
+        { "model": "qwen3:14b",   "vram_gb": 10, "thinks": true, "notes": "Adequate drafts, needs editing." }
+      ]
+    },
+
+    "translation": {
+      "description": "Languages and religious texts. Qwen is genuinely strong multilingual, which is why the translation role exists separately from reasoning.",
+      "candidates": [
+        { "model": "qwen3:32b", "vram_gb": 23, "thinks": true, "notes": "Qwen is genuinely strong multilingual; best for non-English source fidelity." },
+        { "model": "qwen3:14b", "vram_gb": 10, "thinks": true, "notes": "Good for the major world languages." },
+        { "model": "qwen3:8b",  "vram_gb": 6, "thinks": true,  "notes": "Acceptable for European language pairs." }
+      ]
+    },
+
+    "teacher": {
+      "description": "Reads new tech, then teaches the other agents. Long context matters more than raw size.",
+      "candidates": [
+        { "model": "qwen3:32b",   "vram_gb": 23, "thinks": true, "notes": "Holds whole docs in context without summarising them to mush." },
+        { "model": "gpt-oss:20b", "vram_gb": 14, "thinks": true, "notes": "Good enough, and leaves room for the retrieval step." },
+        { "model": "qwen3:14b",   "vram_gb": 10, "thinks": true, "notes": "Only if you keep source material short." }
+      ]
+    },
+
+    "personal": {
+      "description": "A private, offline companion for the owner. Unfiltered by design - the point of the agent is that it does not lecture, moralise or refuse a topic.",
+      "_why_unfiltered_is_a_model_choice": [
+        "This is the only role whose candidates are deliberately NOT safety-aligned,",
+        "and that is a property of the WEIGHTS, not of the prompt. No SOUL.md can",
+        "make llama3.1:8b stop refusing; the refusal is in the model. So an agent",
+        "whose whole purpose is to not refuse cannot share a role with anything",
+        "else in this catalog, and the ladder below is the whole reason the role",
+        "exists.",
+        "",
+        "The safety KEYS are unaffected and stay narrow. AGENT_SAFETY is about what",
+        "an agent can DO to the machine - read, write, execute, config, deploy -",
+        "and 'unfiltered' is about what it will SAY. Those are orthogonal, and",
+        "conflating them is what made this agent look dangerous for its entire",
+        "unbuilt life. `personal` is read-only with AGENT_NETWORK=none: it cannot",
+        "act on the machine and it has no route off it. What it says stays in the",
+        "reply, which is the only place it was ever going to end up.",
+        "",
+        "That combination is what makes 'no filter' a bounded claim rather than a",
+        " euphemism. There is no exfiltration path to filter for. See AGENTS.md.",
+        "",
+        "ALL TAGS BELOW VERIFIED against the registry on 2026-09-27, manifest",
+        "sizes included, because the project's own rule is that an unverified tag in",
+        "this file is a phantom that fails to pull at run time. All five are in the",
+        "library namespace, so tools/check-models.sh --online needs no change to",
+        "verify them - a community-registry tag would 404 against its hardcoded",
+        "library/ path and cry wolf.",
+        "",
+        "DECLARATION ORDER IS NOT LOADED here, unlike `reasoning`: every vram_gb",
+        "below is distinct, so the resolver cannot reach a tie and no reordering",
+        "silently changes what this role picks.",
+        "",
+        "BUT THE SIZE ORDER IS NOT A QUALITY ORDER, and this is worth being blunt",
+        "about, because the resolver takes the LARGEST candidate that fits. On the",
+        "24GB design target it therefore resolves to orca2:13b, NOT to dolphin3:8b,",
+        "even though dolphin3 is the model built specifically for unfiltered",
+        "creative use. Verified across the ladder:",
+        "",
+        "    8GB card -> sailor2:8b          12GB and up -> orca2:13b",
+        "",
+        "So the top of this ladder is chosen by size, and for THIS role size is the",
+        "wrong axis - what matters is how little the model refuses, which no",
+        "vram_gb figure can express. An earlier draft of this note claimed",
+        "dolphin3:8b was the default pick; it is not, on any card from 12GB up, and",
+        "the note was corrected rather than the number fudged. Overstating a",
+        "vram_gb to force a different winner is the exact failure this file's own",
+        "_readme warns about, and on this role it would also be a lie about",
+        "capability: a model that loads is worth more here than a model that is",
+        "merely preferred.",
+        "",
+        "The honest resolution is that orca2:13b vs dolphin3:8b is an EMPIRICAL",
+        "question, answered by this agent's own test cases on the card, not by this",
+        "file. If orca2 turns out to refuse where dolphin3 does not, the fix is to",
+        "reorder this ladder and say so here - not to adjust a number until the",
+        "resolver agrees with a preference.",
+        "",
+        "None of these think, and none of them claim to. `thinks` is false",
+        "throughout, so an agent asking for thinking here would be downgraded",
+        "safely by aiorg_effective_think rather than crashing the run (rule 22).",
+        "The reason to set AGENT_THINK=off anyway is different: reasoning tokens",
+        "land in the reply the owner is reading, and a companion that pauses to",
+        "deliberate in visible prose is worse company, not better."
+      ],
+      "candidates": [
+        { "model": "orca2:13b",             "vram_gb": 9,   "thinks": false, "notes": "Biggest verified option, and therefore the one the resolver actually picks on a 12GB card and up - including the 24GB design target. 7.4GB of weights, Llama 2 base, and Microsoft's card claims no RLHF refusal training. Oldest architecture here; it holds the top rung because the resolver ranks on size, not because it is the best prose. See the note above before trusting that this is the right pick - the test cases decide it, not this file." },
+        { "model": "sailor2:8b",            "vram_gb": 6.5, "thinks": false, "notes": "5.2GB of weights, Mistral Nemo base, tuned toward roleplay. The pick on an 8GB card, where orca2:13b no longer fits. The one to try if the prose register is wrong for the owner." },
+        { "model": "dolphin3:8b",           "vram_gb": 6,   "thinks": false, "notes": "4.9GB of weights, Llama 3.1 base. Built specifically unfiltered for creative and roleplay use, so on priors it is the best fit for what this agent is for - and it is NOT what the resolver picks above 12GB, because the resolver ranks on size. If this agent's test cases show the model above it refusing, move this rung to the top and correct the note." },
+        { "model": "neural-chat:7b-v3.3",   "vram_gb": 5.5, "thinks": false, "notes": "4.1GB of weights, Intel. Less filtered than a stock aligned model rather than unfiltered on purpose. A floor, not a recommendation." },
+        { "model": "llama2-uncensored:7b",  "vram_gb": 5,   "thinks": false, "notes": "3.8GB of weights. The original community uncensored build, 2023-era, and the reason this list has a bottom. Kept so an 8GB card still gets an unfiltered agent." }
+      ]
+    },
+
+    "vision": {
+      "description": "Reads screenshots, diagrams, scanned documents, network diagrams, generated images.",
+      "candidates": [
+        { "model": "qwen3-vl:8b", "vram_gb": 11, "thinks": true, "notes": "Best local vision for UI screenshots, diagrams and document OCR." },
+        { "model": "qwen3-vl:4b", "vram_gb": 6, "thinks": true,  "notes": "Cheap vision, weaker on dense text in images." }
+      ]
+    },
+
+    "embedding": {
+      "description": "Turns documents into searchable vectors. Your helpdesk and knowledge base depend on this.",
+      "candidates": [
+        { "model": "nomic-embed-text",    "vram_gb": 0.6, "notes": "1376-dim, 2K context. Default choice." },
+        { "model": "mxbai-embed-large",   "vram_gb": 0.7, "notes": "1024-dim, 512 tokens. Slightly better on short chunks." }
+      ]
+    }
+  },
+
+  "remote": {
+    "_comment": [
+      "Hosted free-tier endpoints. Zero cost, no card required for the listed",
+      "providers - but your prompts leave the machine, which conflicts with a",
+      "fully-offline goal. Disabled unless AI_ALLOW_REMOTE=true.",
+      "",
+      "Why this exists: a 24GB local card gives you a good worker, not a CTO.",
+      "If you want agents 3, 6 and 8 to have real judgement, these free tiers",
+      "are the only way to get it for nothing. Add a key in the env var shown.",
+      "",
+      "Re-check limits periodically; free tiers change without notice."
+    ],
+    "gemini-free": {
+      "env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "model": "gemini-3-flash",
+      "free_allowance": "~15 requests/min, 1500/day. 1M context. No credit card.",
+      "note": "Generous and the most capable free tier. Best for the CEO/CTO roles."
+    },
+    "groq-free": {
+      "env": "GROQ_API_KEY",
+      "base_url": "https://api.groq.com/openai/v1",
+      "model": "llama-3.3-70b-versatile",
+      "free_allowance": "~30 requests/min, up to 14400/day. No credit card.",
+      "note": "Very fast. Good for high-volume reasoning."
+    },
+    "openrouter-free": {
+      "env": "OPENROUTER_API_KEY",
+      "base_url": "https://openrouter.ai/api/v1",
+      "model": "qwen/qwen3-coder:free",
+      "free_allowance": "20 req/min, 50/day on the free tier.",
+      "note": "One key across many models. Lowest daily cap of the three."
+    }
+  }
+}

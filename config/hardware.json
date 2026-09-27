@@ -1,0 +1,45 @@
+{
+  "platform": {
+    "system": "Linux",
+    "release": "7.2.5-3-omarchy",
+    "machine": "x86_64",
+    "python": "3.14.7"
+  },
+  "cpu": {
+    "model": "Intel(R) Core(TM) i5-5300U CPU @ 2.30GHz",
+    "physical_cores": 2,
+    "logical": 4
+  },
+  "ram": {
+    "total_mb": 7806,
+    "total_gb": 7.6,
+    "recommended_minimum_gb": 64,
+    "ok": false
+  },
+  "gpu": {
+    "count": 0,
+    "devices": [],
+    "vendor": "none",
+    "total_vram_mb": 0,
+    "total_vram_gb": 0.0,
+    "usable_vram_mb": 0,
+    "usable_vram_gb": 0.0,
+    "headless": false
+  },
+  "disk": {
+    "free_gb": 1799.4,
+    "recommended_minimum_gb": 100
+  },
+  "tools": {
+    "docker": true,
+    "docker-compose": true,
+    "ollama": true,
+    "nvidia-smi": false,
+    "git": true,
+    "jq": true,
+    "curl": true
+  },
+  "_tier": "cpu",
+  "_tier_label": "CPU only",
+  "_context": 8192
+}
