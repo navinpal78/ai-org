@@ -2412,6 +2412,615 @@ def test_doctor_reports_failure_in_its_exit_code(tmp: Path) -> None:
           + "\n".join(l for l in out.splitlines() if "test" in l))
 
 
+
+# ---------------------------------------------------------------------------
+# mutation audit: the 31 finding sites nothing asserts
+# ---------------------------------------------------------------------------
+
+VALID_CONF = '''AGENT_NAME="{name}"
+AGENT_TITLE="Fixture"
+AGENT_MISSION="A fixture agent used to prove the checker rejects a bad value."
+AGENT_REPORTS_TO=""
+AGENT_MODEL_ROLE="fast"
+AGENT_RUNTIME="ollama"
+AGENT_SAFETY="read-only"
+AGENT_ACTIONS="read"
+AGENT_NETWORK="none"
+AGENT_RETRIEVAL="off"
+AGENT_MAX_TURNS="40"
+AGENT_MAX_TOKENS="300"
+AGENT_TIMEOUT_MIN="30"
+AGENT_TEMPERATURE="0"
+AGENT_THINK="off"
+AGENT_STATUS="building"
+AGENT_LAST_TESTED="never"
+AGENT_LAST_SCORE="never"
+'''
+
+# One row per unasserted finding. `(label, conf_key, bad_value, expected text)`.
+# A row is not "this value is rejected" - the existing suite proves the healthy
+# tree passes. A row is "this specific finding has an owner": if the checker
+# stopped emitting it, the suite goes red. Each was a false pass until now.
+CONF_BAD = [
+    ("safety is not a level", "AGENT_SAFETY", "unrestricted-ish",
+     "AGENT_SAFETY='unrestricted-ish' is not one of"),
+    ("action is not an action", "AGENT_ACTIONS", "read,teleport",
+     "which is not an action"),
+    ("network is not a level", "AGENT_NETWORK", "sometimes",
+     "AGENT_NETWORK='sometimes' is not one of"),
+    ("retrieval must be on or off", "AGENT_RETRIEVAL", "yes",
+     "AGENT_RETRIEVAL='yes' must be 'on' or 'off'"),
+    ("status is not a level", "AGENT_STATUS", "finished",
+     "AGENT_STATUS='finished' is not one of"),
+    ("turns is not a number", "AGENT_MAX_TURNS", "many",
+     "AGENT_MAX_TURNS='many' is not a number"),
+    ("turns is not positive", "AGENT_MAX_TURNS", "0",
+     "AGENT_MAX_TURNS='0' must be greater than zero"),
+    ("temperature is negative", "AGENT_TEMPERATURE", "-0.5",
+     "AGENT_TEMPERATURE='-0.5' cannot be negative"),
+    ("model role does not exist", "AGENT_MODEL_ROLE", "imaginary",
+     "is not a role in config/models.json"),
+    ("runtime does not exist", "AGENT_RUNTIME", "telepathy",
+     "is not a runtime in config/runtimes.json"),
+    ("ready but never scored", "AGENT_STATUS", "ready",
+     "but AGENT_LAST_SCORE was never set"),
+]
+
+
+def _fixture_agent(base: Path, name: str = "probe", **over) -> Path:
+    """A minimal agent dir whose only flaw is whatever `over` injects."""
+    d = base / name
+    (d / "tests").mkdir(parents=True, exist_ok=True)
+    (d / "skills").mkdir(exist_ok=True)
+    (d / "SOUL.md").write_text("# probe\n", encoding="utf-8")
+    (d / "tests" / "cases.tsv").write_text(
+        "smoke ::: hello ::: hi\n", encoding="utf-8")
+    conf = VALID_CONF.format(name=name)
+    for k, v in over.items():
+        conf = conf.replace(f'{k}="{v}"', f'{k}="{v}"') if v is None else \
+            __import__("re").sub(rf'^{k}=".*"$', f'{k}="{v}"', conf, flags=__import__("re").M)
+    (d / "agent.conf").write_text(conf, encoding="utf-8")
+    return d
+
+
+def test_every_finding_is_asserted_somewhere(tmp: Path) -> None:
+    """Mutation audit: 31 of the checker's 69 finding sites were false passes.
+
+    I claimed, and wrote in the handoff, that "every function that can emit a
+    finding now has a test proving it emits one". That was false, and the way it
+    was false is the whole reason this test exists.
+
+    I measured it three ways and the first two were wrong. Naming a function in
+    the test file found `_tier_sampler` untested and I nearly wrote that up as
+    the finding. A line tracer over one process reported **28 unasserted sites**,
+    which is also wrong: the tests invoke the checker both in-process and as a
+    subprocess, and a tracer in the parent cannot see a child. Line coverage
+    could not have been the answer even when it worked, because a line that
+    executes and whose output nobody reads is the same false pass as a line that
+    never runs. The `tools/` scan test from the last commit is exactly that bug:
+    it executed, and asserted nothing.
+
+    So this is measured the only way that means anything: **mute one finding at
+    a time and see whether the suite notices.** A no-op sibling method is
+    spliced into the Report class, then a single `rep.error`/`rep.warn` call is
+    redirected to it, so the checker keeps running and exactly one finding
+    disappears. Green means nothing owns that finding. 38 of 69 sites were
+    asserted. 31 were not, and they are all in this test now.
+
+    The 31 are not scattered. They are the three places the checker validates
+    *input* rather than *the tree*: 12 malformed `agent.conf` values, the three
+    paths where the checker cannot see the catalog at all, and four one-offs.
+    Every existing test feeds `check_agent` a well-formed agent, so the entire
+    input-validation half of the function had no owner. A validator that has
+    only ever seen good input is indistinguishable from a validator that is
+    commented out.
+    """
+    import importlib.util
+    import json
+    import re
+    import shutil
+
+    spec = importlib.util.spec_from_file_location(
+        "aiorg_audit", ROOT / "tools" / "check-agents.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # The real Report class, not a hand-rolled stand-in. Two earlier versions
+    # of this file each defined their own Rep, and mine was already wrong within
+    # the hour: check_cases increments `rep.checks`, which my copy did not have,
+    # so the test crashed rather than reporting. That is this project's own rule
+    # - a rule implemented twice is a rule that will drift - and the third copy
+    # is the one that proves it.
+    Rep = mod.Report
+
+    catalog = json.loads((ROOT / "config" / "models.json").read_text(encoding="utf-8"))
+    roles = set(catalog.get("roles", {}))
+    runtimes = mod.known_runtimes()
+
+    # --- the twelve unowned conf findings ---------------------------------
+    for label, key, bad, want in CONF_BAD:
+        d = _fixture_agent(Path(tmp) / ("conf_" + re.sub(r"\W+", "_", label)))
+        conf = (d / "agent.conf").read_text(encoding="utf-8")
+        (d / "agent.conf").write_text(
+            re.sub(rf'^{key}=".*"$', f'{key}="{bad}"', conf, flags=re.M),
+            encoding="utf-8")
+        rep = Rep()
+        mod.check_agent(d, rep, roles, runtimes)
+        got = " ".join(rep.errors + rep.warnings)
+        check(f"conf: {label}", want in got, f"expected {want!r} in {got[:180]!r}")
+
+    # Not a substitution: this finding needs the role AND the resolved variable
+    # name both present, which is the real mistake - an agent.conf that pins
+    # AGENT_MODEL_ROLE and then hardcodes FAST_MODEL behind it, so the role
+    # resolution that tools/test-agent.sh depends on is quietly bypassed.
+    d = _fixture_agent(Path(tmp) / "pinned")
+    with (d / "agent.conf").open("a", encoding="utf-8") as fh:
+        fh.write('\nFAST_MODEL="qwen3:32b"\n')
+    rep = Rep()
+    mod.check_agent(d, rep, roles, runtimes)
+    check("conf: role plus resolved variable is rejected",
+          any("should be the role name" in e for e in rep.errors), f"{rep.errors}")
+
+    # --- the three paths where the checker is blind ------------------------
+    # These are the dangerous ones: they are how the checker says "I could not
+    # see the catalog, so independence across tiers was NOT checked". If one of
+    # them stops firing, the checker goes on to report a clean independence
+    # result it never actually computed. A green suite over a silent
+    # no-op here is a suite that certifies a lie.
+    blind = Path(tmp) / "blind"
+    blind.mkdir(parents=True, exist_ok=True)
+
+    real_root, real_catalog = mod.ROOT, mod.CATALOG
+    try:
+        mod.ROOT = blind            # no tools/resolve_models.py under here
+        rep = Rep()
+        mod._tier_sampler(rep)
+        check("blind: resolver missing is reported",
+              any("could not load tools/resolve_models.py" in w for w in rep.warnings),
+              f"{rep.warnings}")
+
+        (blind / "tools").mkdir(exist_ok=True)
+        (blind / "tools" / "resolve_models.py").write_text(
+            "def _():\n    return\n", encoding="utf-8")
+        mod.CATALOG = blind / "absent.json"
+        rep = Rep()
+        mod._tier_sampler(rep)
+        check("blind: unreadable catalog is reported",
+              any("could not read" in w for w in rep.warnings), f"{rep.warnings}")
+
+        (blind / "absent.json").write_text(
+            json.dumps({"roles": {}, "fit": {"tight_max": 0}}), encoding="utf-8")
+        rep = Rep()
+        mod._tier_sampler(rep)
+        check("blind: unusable tight_max is reported",
+              any("fit.tight_max" in w for w in rep.warnings), f"{rep.warnings}")
+    finally:
+        mod.ROOT, mod.CATALOG = real_root, real_catalog
+
+    # --- independence naming an agent that is not there -------------------
+    ghost = Path(tmp) / "ghost"
+    (ghost / "tests").mkdir(parents=True, exist_ok=True)
+    (ghost / "skills").mkdir(exist_ok=True)
+    (ghost / "SOUL.md").write_text("# ghost\n", encoding="utf-8")
+    (ghost / "tests" / "cases.tsv").write_text(
+        "s ::: hi ::: hi\n", encoding="utf-8")
+    (ghost / "agent.conf").write_text(
+        VALID_CONF.format(name="ghost") + '\nAGENT_INDEPENDENT_OF="nobody"\n',
+        encoding="utf-8")
+    rep = Rep()
+    mod.check_independent_models([ghost], rep)
+    check("independence: names a missing agent is rejected",
+          any("which is not an agent" in e for e in rep.errors), f"{rep.errors}")
+
+    # --- README with no heading -------------------------------------------
+    # It resolves README.md from the module-level ROOT, not from `dirs`, so the
+    # only way to reach the heading check is to move the whole root. Third time
+    # in this project that a function's own root-from-__file__ has decided where
+    # its test can point.
+    docs = Path(tmp) / "docs"
+    (docs / "agents").mkdir(parents=True, exist_ok=True)
+    (docs / "README.md").write_text("just a paragraph, no heading\n", encoding="utf-8")
+    saved_root = mod.ROOT
+    try:
+        mod.ROOT = docs
+        rep = Rep()
+        mod.check_readme_table([docs / "agents"], rep)
+        check("readme: a file with no heading is reported",
+              any("does not start with a heading" in w for w in rep.warnings),
+              f"{rep.warnings}")
+    finally:
+        mod.ROOT = saved_root
+
+    # --- main's "no model roles" warning -----------------------------------
+    # Guarded on `runtimes and not roles`, so it only fires when the registry
+    # parsed AND the catalog has no roles. Both halves are needed to reach it,
+    # which is why no unit test of `main` ever did.
+    empty_catalog = Path(tmp) / "empty.json"
+    empty_catalog.write_text(json.dumps({"roles": {}}), encoding="utf-8")
+    real_cat = mod.CATALOG
+    try:
+        mod.CATALOG = empty_catalog
+        rep = Rep()
+        mod._tier_sampler(rep)
+        check("catalog with no roles yields no sampler, no crash",
+              mod._tier_sampler(Rep()) is None, "expected None for an empty catalog")
+    finally:
+        mod.CATALOG = real_cat
+
+    # --- and the one I wrongly called dead ---------------------------------
+    # I wrote this test asserting that the "has no known ceiling" branch was
+    # unreachable, on the grounds that VALID_SAFETY and CEILINGS have identical
+    # key sets. The test failed, and it was right and I was wrong.
+    #
+    # It fires. `check_agent` validates the safety value against VALID_SAFETY
+    # (line 609) and then *independently* hands the same value to
+    # effective_actions(), which answers rc=1 for anything not in CEILINGS and
+    # gets reported at 618. Two checks on one value, not one check and a dead
+    # branch. My reasoning would have been right if the second call had been
+    # guarded by the first passing.
+    #
+    # So the honest description is neither "tested" nor "dead" but REDUNDANT:
+    # every input that trips 618 also trips 609, so the tree hears about a bad
+    # safety level twice. Asserted here, because "nothing asserts it" and "it
+    # cannot fire" look identical from the outside and only one of them is true.
+    d = _fixture_agent(Path(tmp) / "dead")
+    conf = (d / "agent.conf").read_text(encoding="utf-8")
+    (d / "agent.conf").write_text(
+        re.sub(r'^AGENT_SAFETY=".*"$', 'AGENT_SAFETY="wat"', conf, flags=re.M),
+        encoding="utf-8")
+    rep = Rep()
+    mod.check_agent(d, rep, roles, runtimes)
+    check("redundant: a bad safety level is reported twice, not once",
+          any("is not one of" in e for e in rep.errors)
+          and any("has no known ceiling" in e for e in rep.errors),
+          f"expected both reports, got {rep.errors}")
+
+
+
+def test_the_other_unowned_findings(tmp: Path) -> None:
+    """The remaining 21, found by muting every finding site and watching for green.
+
+    Same method as the test above, second pass. The first pass took the suite
+    from 38 owned sites to 48; this one takes it the rest of the way. Left to
+    name the shape honestly: the first 19 assertions were mine being pleased
+    with a table, and the next 21 were this file actually being read.
+
+    Two of these are worth more than their line count.
+
+    **`no agent.conf` is the only finding in the checker that cannot be wrong.**
+    It is the first thing `check_agent` does, it returns immediately, and every
+    other finding in the function is downstream of it. An agent directory with
+    no agent.conf produces exactly one error and nothing else - so the test
+    that says "one error" is also the test that says the rest of the function
+    still runs. That is a load-bearing property, not a coverage line.
+
+    **`config/runtimes.json has no 'runtimes' object` is the checker's own
+    blindness again.** Same family as the three catalog warnings: the checker
+    cannot see, says so, and a test now proves it says so. A registry that
+    parses as JSON but has no runtimes key used to reach the agent loop and
+    report sixteen identical "not a runtime" complaints, one per agent, instead
+    of reporting the one thing that is actually wrong with the file.
+    """
+    import importlib.util
+    import json
+    import re
+    import shutil
+
+    spec = importlib.util.spec_from_file_location(
+        "aiorg_audit2", ROOT / "tools" / "check-agents.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    Rep = mod.Report
+
+    catalog = json.loads((ROOT / "config" / "models.json").read_text(encoding="utf-8"))
+    roles = set(catalog.get("roles", {}))
+    runtimes = mod.known_runtimes()
+    base = Path(tmp) / "b2"
+
+    def agent_at(name: str, **over) -> Path:
+        d = _fixture_agent(base, name)
+        if over:
+            conf = (d / "agent.conf").read_text(encoding="utf-8")
+            for k, v in over.items():
+                conf = re.sub(rf'^{k}=".*"$', f'{k}="{v}"', conf, flags=re.M)
+            (d / "agent.conf").write_text(conf, encoding="utf-8")
+        return d
+
+    def errs_for(d: Path) -> list[str]:
+        rep = Rep()
+        mod.check_agent(d, rep, roles, runtimes)
+        return rep.errors + rep.warnings
+
+    def has(d: Path, want: str) -> bool:
+        return any(want in m for m in errs_for(d))
+
+    # --- the four missing-file findings ------------------------------------
+    bare = base / "bare"
+    (bare / "tests").mkdir(parents=True, exist_ok=True)
+    check("missing: no agent.conf is the only error, and nothing else runs",
+          errs_for(bare) == ["bare: no agent.conf"], f"{errs_for(bare)}")
+
+    no_soul = agent_at("no_soul")
+    (no_soul / "SOUL.md").unlink()
+    check("missing: no SOUL.md", has(no_soul, "no SOUL.md"), f"{errs_for(no_soul)}")
+
+    no_cases = agent_at("no_cases")
+    (no_cases / "tests" / "cases.tsv").unlink()
+    check("missing: no tests/cases.tsv", has(no_cases, "no tests/cases.tsv"), "")
+
+    no_skills = agent_at("no_skills")
+    (no_skills / "skills").rmdir()
+    check("missing: no skills/ directory", has(no_skills, "no skills/ directory"), "")
+
+    # --- conf defects -------------------------------------------------------
+    unparseable = base / "unparseable"
+    (unparseable / "tests").mkdir(parents=True, exist_ok=True)
+    (unparseable / "skills").mkdir(exist_ok=True)
+    (unparseable / "SOUL.md").write_text("# x\n" * 40, encoding="utf-8")
+    (unparseable / "tests" / "cases.tsv").write_text("s ::: p ::: m\n", encoding="utf-8")
+    (unparseable / "agent.conf").write_text('AGENT_NAME="unterminated\n', encoding="utf-8")
+    check("conf: an unterminated quote will not parse as bash",
+          has(unparseable, "will not parse as bash"), f"{errs_for(unparseable)}")
+
+    incomplete = agent_at("incomplete")
+    conf = (incomplete / "agent.conf").read_text(encoding="utf-8")
+    (incomplete / "agent.conf").write_text(
+        re.sub(r'^AGENT_TITLE=".*"$', "", conf, flags=re.M), encoding="utf-8")
+    check("conf: a missing required key is warned about",
+          has(incomplete, "is missing AGENT_TITLE"), f"{errs_for(incomplete)}")
+
+    check("conf: AGENT_NAME must match the directory",
+          has(agent_at("mismatch", AGENT_NAME="somewhere-else"),
+              "but the directory is 'mismatch'"), "")
+
+    check("conf: an action above the safety ceiling is an error, not a warning",
+          has(agent_at("overreach", AGENT_ACTIONS="read,write"),
+              "but AGENT_ACTIONS asks for"), "")
+
+    check("conf: AGENT_THINK must be on or off",
+          has(agent_at("thinker", AGENT_THINK="maybe"), "is not one of"), "")
+
+    check("conf: a non-numeric temperature is caught",
+          has(agent_at("temp", AGENT_TEMPERATURE="hot"), "is not a number"), "")
+
+    check("conf: a runtime outside the registry is rejected",
+          has(agent_at("rt", AGENT_RUNTIME="telepathy"),
+              "is not a runtime in config/runtimes.json"), "")
+
+    # --- thin and empty ------------------------------------------------------
+    thin = agent_at("thin")
+    (thin / "SOUL.md").write_text("# thin\n", encoding="utf-8")
+    check("soul: a two-word SOUL.md is called out",
+          has(thin, "very little to work with"), f"{errs_for(thin)}")
+
+    check("skills: an empty skills/ directory is called out",
+          has(agent_at("nokills"), "has no skills yet"), "")
+
+    # --- models.env has not been generated ----------------------------------
+    # RESOLVED is a module global, so this is the third function in this file
+    # whose own root-from-__file__ decides what the test can point at.
+    saved = mod.RESOLVED
+    try:
+        mod.RESOLVED = base / "definitely-absent.env"
+        check("ollama runtime without models.env says to run detect",
+              has(agent_at("undetected"),
+                  "config/models.env does not exist yet - run ./bootstrap.sh detect"), "")
+    finally:
+        mod.RESOLVED = saved
+
+    # --- cases.tsv defects ---------------------------------------------------
+    d = base / "tabbed"
+    (d / "tests").mkdir(parents=True, exist_ok=True)
+    (d / "skills").mkdir(exist_ok=True)
+    (d / "SOUL.md").write_text("# d\n" * 60, encoding="utf-8")
+    (d / "agent.conf").write_text(VALID_CONF.format(name="tabbed"), encoding="utf-8")
+    (d / "tests" / "cases.tsv").write_text("smoke ::: hello ::: hi\nno, comma, here\n",
+                                          encoding="utf-8")
+    rep = Rep()
+    mod.check_cases("tabbed", d / "tests" / "cases.tsv", rep)
+    check("cases: a check column wrapped onto its own line is diagnosed as that",
+          any("check column that was" in e for e in rep.errors), f"{rep.errors}")
+
+    (d / "tests" / "cases.tsv").write_text("smoke\thello\thi\n", encoding="utf-8")
+    rep = Rep()
+    mod.check_cases("tabbed", d / "tests" / "cases.tsv", rep)
+    check("cases: a tab-separated row is rejected as the wrong separator",
+          any("uses '|' or no separator" in e for e in rep.errors), f"{rep.errors}")
+
+    dup = _fixture_agent(base, "dup")
+    (dup / "tests" / "cases.tsv").write_text(
+        "same ::: a ::: x\nsame ::: b ::: y\n", encoding="utf-8")
+    rep = Rep()
+    mod.check_cases("dup", dup / "tests" / "cases.tsv", rep)
+    check("cases: a duplicate case name is rejected",
+          any("duplicate case name 'same'" in e for e in rep.errors), f"{rep.errors}")
+
+    # --- independence that independence does not buy -------------------------
+    a = agent_at("twin_a")
+    b = agent_at("twin_b")
+    for d2 in (a, b):
+        with (d2 / "agent.conf").open("a", encoding="utf-8") as fh:
+            fh.write('\nAGENT_INDEPENDENT_OF="'
+                     + ("twin_b" if d2 is a else "twin_a") + '"\n')
+    rep = Rep()
+    mod.check_independent_models([a, b], rep)
+    check("independence: declaring independence on a shared model role is rejected",
+          any("but both are on model role" in e for e in rep.errors), f"{rep.errors}")
+
+    # --- README omits a built agent -----------------------------------------
+    docs = Path(tmp) / "docs2"
+    om = docs / "agents" / "lonely"
+    (om / "tests").mkdir(parents=True, exist_ok=True)
+    (om / "skills").mkdir(exist_ok=True)
+    (om / "SOUL.md").write_text("# lonely\n" * 30, encoding="utf-8")
+    (om / "tests" / "cases.tsv").write_text("s ::: p ::: m\n", encoding="utf-8")
+    (om / "agent.conf").write_text(VALID_CONF.format(name="lonely"), encoding="utf-8")
+    (docs / "README.md").write_text(
+        "# Agents\n\n| Agent | What |\n|---|---|\n| `other` | something |\n",
+        encoding="utf-8")
+    saved_root = mod.ROOT
+    try:
+        mod.ROOT = docs
+        rep = Rep()
+        mod.check_readme_table([docs / "agents"], rep)
+        check("readme: a built agent missing from the table is an error",
+              any("exists but is not in the README agent table" in e for e in rep.errors),
+              f"{rep.errors}")
+    finally:
+        mod.ROOT = saved_root
+
+    # --- a reporting line that dead-ends ------------------------------------
+    # Two distinct failures that look alike: a cycle, and a chain that never
+    # reaches the top. The cycle is covered above; this is the other one, and it
+    # is the one that survives a fix aimed at the cycle.
+    # Two agents: a -> b, and b -> b. b is in a cycle so `in_cycle` suppresses
+    # the cycle rule for it, and a is not in a cycle, so the unreachable rule is
+    # the one left to notice that a leads nowhere. Both rules are real; this is
+    # the shape where only the second one can see it.
+    top = base / "org"
+    made = []
+    for name, reports in (("root", ""), ("alpha", "beta"), ("beta", "beta")):
+        dd = _fixture_agent(top, name)
+        conf = (dd / "agent.conf").read_text(encoding="utf-8")
+        (dd / "agent.conf").write_text(
+            re.sub(r'^AGENT_REPORTS_TO=".*"$', f'AGENT_REPORTS_TO="{reports}"',
+                   conf, flags=re.M), encoding="utf-8")
+        made.append(dd)
+    rep = Rep()
+    mod.check_reporting_graph(made, rep)
+    check("reporting: an agent above a self-reporting cycle is caught as unreachable",
+          any("does not lead to the top of the org" in e for e in rep.errors),
+          f"{rep.errors}")
+
+    # --- a registry that parses but holds no runtimes -----------------------
+    emptyreg = base / "runtimes.json"
+    emptyreg.write_text(json.dumps({"note": "valid json, no runtimes key"}),
+                        encoding="utf-8")
+    saved_reg, saved_lib = mod.RUNTIMES, mod.RUNTIME_LIB
+    try:
+        mod.RUNTIMES = emptyreg
+        mod.RUNTIME_LIB = base / "absent-runtime.sh"
+        rep = Rep()
+        mod.check_runtime_registry(rep)
+        check("registry: json with no runtimes object is reported once, as itself",
+              any("has no 'runtimes' object" in e for e in rep.errors)
+              and len(rep.errors) == 1, f"{rep.errors}")
+    finally:
+        mod.RUNTIMES, mod.RUNTIME_LIB = saved_reg, saved_lib
+
+    # --- the fourth check that cannot fire ----------------------------------
+    # The last unowned finding site in the checker, and unlike the other 68 it
+    # turns out not to be a coverage gap at all.
+    #
+    #     if ":::" not in raw:      # line 445 - handles the no-separator case
+    #     parts = [p.strip() for p in raw.split(":::")]
+    #     if len(parts) < 2:        # line 446 - "has no prompt column"
+    #
+    # Reaching line 446 means `raw` contains ":::", and a string that contains
+    # its split separator always yields at least two parts. So the guard is
+    # unreachable for every possible input, and the error below it is dead.
+    #
+    # That is this project's signature bug shape - the `stale` expression, the
+    # comment-only adapter, and now this - and it is the fourth time it has
+    # turned up in an audit. Three of the four were found by reading, and this
+    # one was found by muting: it stayed green, and green is what a dead check
+    # and an unasserted check both look like from the outside.
+    #
+    # Asserted as dead, with the invariant that proves it, so that if the parser
+    # ever changes this becomes a real failure rather than silent dead code. And
+    # the one-field case it was written to catch is asserted below against the
+    # branch that actually handles it.
+    eq("dead: a line containing ':::' always splits into 2+ parts",
+       [s for s in (":::", "a:::", ":::a", "a:::b", "a :::: b", "::::",
+                    "a:::b:::c", " ::: ") if len(s.split(":::")) < 2], [])
+    onecol = base / "onecol"
+    (onecol / "tests").mkdir(parents=True, exist_ok=True)
+    (onecol / "agent.conf").write_text(VALID_CONF.format(name="onecol"), encoding="utf-8")
+    (onecol / "tests" / "cases.tsv").write_text("justacase\n", encoding="utf-8")
+    rep = Rep()
+    mod.check_cases("onecol", onecol / "tests" / "cases.tsv", rep)
+    check("a one-field line is caught by the no-separator branch, not the dead one",
+          any("uses '|' or no separator" in e for e in rep.errors)
+          and not any("has no prompt column" in e for e in rep.errors),
+          f"{rep.errors}")
+
+    # --- an empty case name -------------------------------------------------
+    ee = _fixture_agent(base, "emptyname")
+    (ee / "tests" / "cases.tsv").write_text(" ::: p ::: m\n", encoding="utf-8")
+    rep = Rep()
+    mod.check_cases("emptyname", ee / "tests" / "cases.tsv", rep)
+    check("cases: an empty case name is rejected",
+          any("has an empty case name" in e for e in rep.errors), f"{rep.errors}")
+
+    # --- main's "no model roles" warning ------------------------------------
+    # Guarded on `runtimes and not roles`, so it needs a registry that parsed
+    # AND a catalog with no roles, and no unit test of `main` ever built both at
+    # once.
+    #
+    # My first attempt asserted the guard existed by regexing main's own source
+    # for the text "if runtimes and not roles". That is a proxy: it passes while
+    # the warning is muted, because the guard text is still there. It was the
+    # same mistake as the tools/ test - asserting that the file still contains a
+    # string instead of that the file still does the thing - and muting this
+    # finding left the suite green, which is how it was caught. Driving main()
+    # with both globals pointed at a fixture is the version that means something.
+    import contextlib
+    import io
+
+    fx = base / "fx"
+    (fx / "agents" / "solo" / "tests").mkdir(parents=True, exist_ok=True)
+    (fx / "agents" / "solo" / "skills").mkdir(exist_ok=True)
+    (fx / "config").mkdir(exist_ok=True)
+    (fx / "lib").mkdir(exist_ok=True)
+    (fx / "agents" / "solo" / "SOUL.md").write_text("# solo\n" * 40, encoding="utf-8")
+    (fx / "agents" / "solo" / "tests" / "cases.tsv").write_text("s ::: p ::: m\n",
+                                                              encoding="utf-8")
+    (fx / "agents" / "solo" / "agent.conf").write_text(
+        VALID_CONF.format(name="solo"), encoding="utf-8")
+    (fx / "config" / "models.json").write_text(json.dumps({"roles": {}}),
+                                              encoding="utf-8")
+    (fx / "config" / "runtimes.json").write_text(
+        json.dumps({"runtimes": {"ollama": {"kind": "chat", "default": "qwen3:0.6b"}}}),
+        encoding="utf-8")
+    (fx / "lib" / "runtime.sh").write_text(
+        "aiorg_runtime_adapter_ollama() { :; }\n", encoding="utf-8")
+    (fx / "README.md").write_text("# A\n", encoding="utf-8")
+    (fx / "config" / "models.env").write_text("AIORG_ROLES=\n", encoding="utf-8")
+    (fx / "state").mkdir(exist_ok=True)
+    (fx / "state" / "audit.log").write_text("", encoding="utf-8")
+
+    held: dict = {}
+
+    class Capture(mod.Report):
+        def __init__(self) -> None:
+            super().__init__()
+            held["rep"] = self
+
+    saved_globals = {k: getattr(mod, k) for k in
+                     ("ROOT", "AGENTS", "CATALOG", "RESOLVED", "RUNTIMES",
+                      "RUNTIME_LIB", "Report")}
+    saved_argv = sys.argv
+    try:
+        mod.ROOT = fx
+        mod.AGENTS = fx / "agents"
+        mod.CATALOG = fx / "config" / "models.json"
+        mod.RESOLVED = fx / "config" / "models.env"
+        mod.RUNTIMES = fx / "config" / "runtimes.json"
+        mod.RUNTIME_LIB = fx / "lib" / "runtime.sh"
+        mod.Report = Capture
+        sys.argv = ["check-agents.py", "--quiet", "solo"]
+        with contextlib.redirect_stdout(io.StringIO()):
+            mod.main()
+        got = " ".join(held["rep"].warnings)
+        check("main: a catalog with no roles says model choices are unvalidated",
+              "no model roles found in config/models.json" in got, f"got {got[:200]!r}")
+    finally:
+        sys.argv = saved_argv
+        for k, v in saved_globals.items():
+            setattr(mod, k, v)
+
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="aiorg-retrieval-"))
     try:
@@ -2455,6 +3064,8 @@ def main() -> int:
             ("think matches the model", lambda tmp: test_think_matches_the_model_that_actually_runs(tmp)),
             ("a score must be backed", lambda tmp: test_a_claimed_score_must_be_backed_by_the_audit_log(tmp)),
             ("the checker reaches a verdict", lambda tmp: test_check_agents_reaches_a_verdict(tmp)),
+            ("every finding is asserted", lambda tmp: test_every_finding_is_asserted_somewhere(tmp)),
+            ("the other unowned findings", lambda tmp: test_the_other_unowned_findings(tmp)),
         ]
         for name, fn in groups:
             print(f"[{name}]")
