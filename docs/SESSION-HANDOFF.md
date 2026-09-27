@@ -2790,3 +2790,107 @@ functions it looked at were wrong, in a tree whose `check` was passing.**
 
 **State:** 16 agents, 607 cases, **415 assertions**, **1 error** (28-48GB auditor
 band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.
+
+
+## The completeness claim was false, and how to measure that properly
+
+The previous two commits of this session both asserted, in prose, that "every
+function that can emit a finding now has a test proving it emits one." Then I
+went looking for a way to check the claim, and the check itself was wrong three
+times before it was right.
+
+| Attempt | Claimed | Why it was wrong |
+|---|---|---|
+| does this function name appear in the test file? | `_tier_sampler` untested | name-matching misses helpers reached through a caller, and finds nothing about *what* is asserted |
+| line tracer over the test process | 28 unasserted sites | the tests drive the checker in-process AND as a subprocess; a tracer in the parent cannot see a child |
+| "one of those two must be right" | - | a line that executes and whose output nobody reads is the same false pass as a line that never runs - the `tools/` scan bug, invisible to a coverage number |
+| **mute one finding, see if the suite notices** | **31 of 69 unowned** | correct, and still wrong twice more (below) |
+
+The method: splice a no-op sibling method into the `Report` class, redirect a
+single `rep.error`/`rep.warn` at it. The checker keeps running; exactly one
+finding disappears. Green means nothing owns that finding.
+
+**Ground truth: 31 of 69 finding sites had no owner.** They were not scattered:
+
+- **12** malformed `agent.conf` values. Every existing test fed `check_agent` a
+  well-formed agent, so the entire input-validation half of the function had
+  no owner. A validator that has only ever seen good input is
+  indistinguishable from one that is commented out.
+- **3** the paths where the checker admits it cannot see the model catalog.
+  These are the dangerous ones: they are how it says "independence across tiers
+  was NOT checked". If one goes silent, the checker certifies a result it never
+  computed.
+- **4** one-offs, plus `check_readme_table`'s no-heading warning and
+  `check_runtime_registry`'s "no runtimes object".
+
+Two mistakes in the tests themselves, both caught by running them:
+
+- I hand-rolled a **third** copy of the `Report` class and it was wrong within
+  the hour (`check_cases` increments `rep.checks`, which my copy lacked). Two
+  earlier tests in that file each define their own `Rep`. This project's own
+  rule: *a rule implemented twice is a rule that will drift.* The third copy is
+  what proves it. Both new tests use the real class.
+- I asserted `main`'s no-roles warning by regexing `main`'s own source for the
+  text `if runtimes and not roles`. A proxy: it passes with the warning muted,
+  because the guard is still there. Replaced with an actual call to `main()`
+  against a fixture tree.
+
+And I was wrong about a dead branch, in the direction that matters. I wrote a
+test claiming "has no known ceiling" was unreachable - `VALID_SAFETY` and
+`CEILINGS` have identical key sets - and the test failed. It fires:
+`check_agent` validates the safety value and then hands the same value to
+`effective_actions` independently, so a bad level is reported **twice**.
+Redundant, not dead. My reasoning would have held if the second call were
+guarded by the first passing.
+
+**The one genuine dead check is the fourth of this project's signature bug
+shape** (after the `stale` expression, the comment-only adapter, and the stale
+`_tier_sampler` call). `check_cases`' "has no prompt column": the line above
+established `raw` contains `:::`, and a string containing its own split
+separator always yields two or more parts, so `len(parts) < 2` is unreachable.
+Asserted dead, with the invariant, and the case it was meant to catch is now
+asserted against the branch that does handle it.
+
+### The measurement lied to me twice more
+
+The mutation harness was not trustworthy, and both of its failures produced
+results that looked like findings about the project:
+
+1. `idx % WORKERS` picked a scratch **directory** but not a **thread**, so
+   `ThreadPoolExecutor` ran four tasks with the same index class concurrently in
+   one tree, each overwriting and restoring the others' mutations. The total
+   moved between *identical* runs: 19, then 21, then 6. The first "3 of 5
+   functions were wrong" style conclusion would have been unfalsifiable.
+2. A mutation whose line window missed its target returned `SKIP`, and `SKIP`
+   was counted as **asserted**. A mutation that never happened being reported as
+   a pass is the same false-pass shape this whole section is about. Caught by
+   noticing that `check_cases:447` could not be the line I had read it to be -
+   the AST said one thing and my `sed` said another, and the AST was right.
+
+Fixed by giving each worker a contiguous chunk and its own tree, and by
+reporting skips separately instead of counting them as passes. After the fix
+the answer was stable across runs.
+
+### And then the new test made the project's own check lie
+
+The last defect is the one worth remembering. The new test drives `main()`
+against a fixture tree and captured **stdout only**. `main()` prints its
+findings to **stderr**, so every finding the test provoked appeared in
+`./bootstrap.sh check`, including a complete
+
+    [fail] runtimes: config/runtimes.json lists runtime 'ollama' but
+           lib/runtime.sh has no _rt_ollama_probe adapter
+    2 problem(s). Fix these before trusting a test score
+
+The tree was fine. `git status` was clean, the real checker reported 1 problem,
+and `lib/runtime.sh` defines both adapters. That phantom "2 problem(s)" is the
+project's own documented never-happen: the docs say the count must never be
+anything but 1. A future session would have gone hunting a runtime regression
+that did not exist and "fixed" a correct file.
+
+Nothing caught it, **because the assertions were passing the entire time.** The
+assertions were never the problem. The noise around them was. A test that makes
+the diagnostic lie is worse than no test at all.
+
+Final: **69 finding sites, 68 owned by an assertion, 1 proved dead.** 460
+checks, deterministic across runs - which the first three attempts were not.

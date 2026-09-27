@@ -116,7 +116,7 @@ Complete and structurally validated:
 | `storyteller` | 45 | read-only | read | Long-form fiction. Read-only because a story lives in the reply, not because acting is dangerous. Weighted against the good-looking empty story |
 | `personal` | 18 | read-only | read | Private offline companion for adult/kink and technical conversation. Unfiltered in *tone*, read-only on the *machine* - the two are unrelated. Built 2026-09-27, the last of the non-GPU agents |
 
-607 test cases, all structurally valid, plus 415 assertions in
+607 test cases, all structurally valid, plus 460 assertions in
 `tests/test_retrieval.py`. `./bootstrap.sh check` is **red** right now, on one
 known catalog bug and nothing else - see "What is still red" under *The
 monoculture* below for why that is deliberate and what to do about it. It also
@@ -433,6 +433,45 @@ currently claims.
 
 **And it did not fix `cto`/`ceo`, which is what the next section is about.**
 
+## Every finding the checker makes is owned by a test
+
+`tools/check-agents.py` makes **69 finding call sites** (68 `rep.error`, 1 `rep.warn`
+in the hottest function, spread over 13 functions). All 68 reachable ones are
+owned by an assertion: mute any single one - redirect it to a no-op - and the
+suite goes red. The 69th is unreachable and asserted dead (see below).
+
+**Measure this by mutation, never by name-matching and never by line coverage.**
+Naming a function in the test file misses helpers that are reached through a
+caller. A line tracer misses every finding the tests provoke in a subprocess,
+and - worse - a line that executes and whose output nobody reads is the same
+false pass as a line that never runs.
+
+Three instruments in this file were wrong before the measurement was:
+
+- `idx % WORKERS` chose a scratch directory but not a thread, so four
+  concurrent mutations shared one tree and overwrote each other. The total
+  moved between identical runs: 19, then 21, then 6.
+- A mutation whose line window missed returned `SKIP`, and `SKIP` was counted
+  as *asserted*. A mutation that never happened reported as a pass is the exact
+  false-pass shape this rule is about.
+- A test that drove `main()` against a fixture captured stdout only, so the
+  fixture's findings escaped into `./bootstrap.sh check` and it reported 3
+  problems instead of 1. Nothing caught it, because the assertions passed.
+
+**A check that cannot fire is the fourth kind of bug in this project, not a
+subset of coverage.** `check_cases`' "has no prompt column" is unreachable: the
+line above it has already established that `raw` contains `:::`, and a string
+containing its own split separator always yields two or more parts. Same shape
+as the dead `stale` expression, the comment-only adapter, and the stale
+`_tier_sampler` call. Asserted dead, with the invariant that proves it.
+
+And one I got wrong in the other direction: I claimed "has no known ceiling"
+was dead too, wrote a test for it, and the test failed. It fires -
+`check_agent` validates `AGENT_SAFETY` against `VALID_SAFETY` and then hands
+the same value to `effective_actions` independently, so a bad level is reported
+**twice**. Redundant, not dead. Only one of "untested" and "unreachable" can be
+true from the outside, and the way to tell them apart is to run the mutation.
+
 ## The other two judges were on the same weights, and nobody was looking
 
 The paragraph above used to end with a decision left unmade: "separating the
@@ -560,7 +599,7 @@ assertions in `test_independence_survives_every_hardware_tier`.
 
 **What is still red, and why it cannot be fixed by adding a candidate.** As of
 2026-09-26 `./bootstrap.sh check` is **red** on exactly one thing: the 28-48GB
-band, 1 error, with 607 cases and 415 assertions otherwise clean. The owner's
+band, 1 error, with 607 cases and 460 assertions otherwise clean. The owner's
 earlier choice was to leave it red and revisit when the GPU arrives rather than
 scope the guarantee to a card band; that decision covered the low band too, and
 the low band has now been fixed on the owner's instruction, which supersedes it
@@ -1050,7 +1089,7 @@ alongside the untrusted page text, on the reasoning that the injection warning
 system slot is the one place page text cannot reach, so the SOUL and the warning
 both belong there.
 
-`tests/test_retrieval.py` (415 assertions) starts its own loopback server and
+`tests/test_retrieval.py` (460 assertions) starts its own loopback server and
 asserts every one of those refusals, and runs as part of `./bootstrap.sh check`.
 
 ### The gap the research department did not close
