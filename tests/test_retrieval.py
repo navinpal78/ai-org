@@ -2983,7 +2983,7 @@ def test_the_other_unowned_findings(tmp: Path) -> None:
         json.dumps({"runtimes": {"ollama": {"kind": "chat", "default": "qwen3:0.6b"}}}),
         encoding="utf-8")
     (fx / "lib" / "runtime.sh").write_text(
-        "aiorg_runtime_adapter_ollama() { :; }\n", encoding="utf-8")
+        "_rt_ollama_probe() { :; }\n_rt_ollama_chat() { :; }\n", encoding="utf-8")
     (fx / "README.md").write_text("# A\n", encoding="utf-8")
     (fx / "config" / "models.env").write_text("AIORG_ROLES=\n", encoding="utf-8")
     (fx / "state").mkdir(exist_ok=True)
@@ -3009,11 +3009,21 @@ def test_the_other_unowned_findings(tmp: Path) -> None:
         mod.RUNTIME_LIB = fx / "lib" / "runtime.sh"
         mod.Report = Capture
         sys.argv = ["check-agents.py", "--quiet", "solo"]
-        with contextlib.redirect_stdout(io.StringIO()):
+        # Both streams. main() prints findings to stderr, so redirecting stdout
+        # only is not enough: this test's fixture findings appeared inside the
+        # project's own `./bootstrap.sh check` output, complete with a
+        # "2 problem(s)" summary, which is exactly the shape of a real
+        # regression and precisely the thing the project's own docs say must
+        # never be anything but 1. A test that makes the diagnostic lie is
+        # worse than no test, and the fix is one line.
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
             mod.main()
         got = " ".join(held["rep"].warnings)
         check("main: a catalog with no roles says model choices are unvalidated",
               "no model roles found in config/models.json" in got, f"got {got[:200]!r}")
+        eq("main: and that fixture tree is otherwise clean, so the warning is alone",
+           held["rep"].errors, [])
     finally:
         sys.argv = saved_argv
         for k, v in saved_globals.items():
