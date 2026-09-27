@@ -433,6 +433,36 @@ currently claims.
 
 **And it did not fix `cto`/`ceo`, which is what the next section is about.**
 
+## The writer/reader seam on state/audit.log
+
+`lib/audit.sh` **writes** `state/audit.log`. `check-agents.py`'s
+`check_last_score_is_backed` **judges every `AGENT_LAST_SCORE` by it**. That
+judgement is what caught the fake 100%, and for most of this project's life the
+two halves had never met: every test of the reader built the log line by hand.
+
+It now runs `lib/audit.sh` as a real subprocess and judges the result with the
+real reader, using the writer's **default** log path rather than overriding
+`AIORG_AUDIT_LOG` - overriding would make the halves meet only because the test
+lined them up, which is the thing being ruled out.
+
+Two things to know before changing either side:
+
+- **A renamed KEY and a truncated VALUE fail differently.** `pct=` ->
+  `percentage=` is caught by the field-name assertion. Cutting the 64-char value
+  cap to 3 leaves every key intact and produces `agent=hel verdict=fai ... pct=80`
+  - a reader that only checked for the key would sail straight past it. Both are
+  covered.
+- **Three numbers have to agree, and the agreement is a rounding convention
+  nobody wrote down.** `test-agent.sh` computes `PCT=$(( PASS * 100 / TOTAL ))`
+  (bash integer division), logs `pct=80` for 17 of 21 cases, and `sed`s
+  `AGENT_LAST_SCORE="80%"` back into agent.conf. 17/21 is 80.95%. If the
+  arithmetic or the sed ever changes, a correct agent fails its own audit trail.
+
+The audit-log safety rule still holds and is load-bearing: no prompts, no
+replies, no credentials. `agents/security-engineer/tests/cases.tsv` contains
+deliberate injection payloads, and a log that captured them would be a file full
+of text shaped like orders sitting where the teacher agent reads it.
+
 ## Re-deriving the coverage claim: `tools/mutation-audit.py`
 
 ```bash

@@ -2894,3 +2894,77 @@ the diagnostic lie is worse than no test at all.
 
 Final: **69 finding sites, 68 owned by an assertion, 1 proved dead.** 460
 checks, deterministic across runs - which the first three attempts were not.
+
+## The seam: who writes audit.log, and who believes it
+
+The plan was to mutation-audit the two instruments left un-audited. Checking
+whether the method applied at all is what changed it.
+
+- **`lib/audit.sh` is the wrong instrument for a mutation audit.** It emits no
+  findings - 0 `bad(`/`warn(`/`log_err` call sites. It is a *writer*. The
+  mutation audit measures whether tests own a checker's findings; this file has
+  none, so the question does not apply.
+- **`tools/check-models.sh` has 5 finding sites** (lines 102, 113, 115, 139,
+  140) against the 69 just audited, and 3 need a live Ollama or a real 404 to
+  reach. A tenth the size, a tenth the prize.
+
+What `lib/audit.sh` *does* have is a **seam**:
+
+    lib/audit.sh  --writes-->  state/audit.log  --read by-->  check-agents.py
+                                                              check_last_score_is_backed
+
+The reader's entire job is deciding whether a number in `agent.conf` is a
+measurement or a guess, and it decides that by parsing lines somebody else wrote.
+`lib/audit.sh` had **0 mentions** in the test suite. Every test of the reader
+hand-built its log lines from the documented format, in a helper called `line()`.
+**The two halves had never met.**
+
+Why it matters is specific. The reader needs two field names: `agent` and `pct`.
+`tools/test-agent.sh` passes both - `audit_close "pct=$PCT"`, and the open call
+carries `agent=$AGENT`. So it works today. But they only meet if the writer's
+*normalisation* preserves those names, and normalisation is aggressive on
+purpose: keys lowercased and cut to `[a-z0-9_]` at 24 chars, values cut to 64
+with anything outside a safe set replaced by underscores. That is correct
+behaviour and exactly the sort of thing that silently renames a field.
+
+The test runs the real writer as a subprocess and judges with the real reader,
+**using the writer's default log path** rather than overriding
+`AIORG_AUDIT_LOG`. That detail is the test. Overriding would make the halves meet
+only because the test lined them up by hand - the exact thing being ruled out.
+The default is `$AIORG_STATE/audit.log`; the reader's is `ROOT/state/audit.log`;
+in the project `AIORG_STATE` is `<root>/state`, which is why those two agree.
+
+**Two mutations, and the second is the one that matters:**
+
+| mutation | result |
+|---|---|
+| writer emits `percentage=` instead of `pct=` | 4 reds |
+| the 64-char value cap cut to 3 | 4 reds, and the log reads `agent=hel verdict=fai ... pct=80` |
+
+A renamed **key** and a truncated **value** are different failures. In the second
+case every key is intact, so a reader that only checked "does this line have
+`pct=`" would pass it happily; what broke was the value. Anyone hardening this
+seam should assert on parsed values, not on field presence.
+
+**The other half of the loop, which nobody had looked at:** `test-agent.sh` also
+`sed`s `AGENT_LAST_SCORE="$PCT%"` back into `agent.conf` on the same run that
+wrote the log line, where `PCT=$(( PASS * 100 / TOTAL ))` is bash integer
+division. So 17 of 21 cases is 80.95% in reality, `80` in the log, and `80%` in
+the config - three numbers that agree only because of a rounding convention
+nobody wrote down. Asserted, including that `81` is inflation rather than
+rounding, and that a crashed run writes `verdict=error` with **no** `pct` and is
+therefore not evidence for any score.
+
+Two fixture mistakes of mine on the way, both loud and both mine: I pointed the
+writer at `$tmp/audit.log` while the reader reads `$ROOT/state/audit.log`, and
+then set `AIORG_STATE=tmp` when `AIORG_STATE` **is** the state directory. The
+fix in both cases was to run the writer by hand in isolation, which showed the
+tool was correct and the test was not. Third time this session that the
+instrument, not the code, was the thing that was wrong.
+
+460 -> 472 checks.
+
+**Left undone deliberately:** `tools/check-models.sh` (5 finding sites, 3 needing
+a live server). Feasible - the registry path works and the tool runs clean - but
+a tenth the size of what was just audited, and the catalog is currently correct
+with 0 phantoms. Worth doing if the phantom-detection claim needs hardening.
