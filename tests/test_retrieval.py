@@ -2293,6 +2293,160 @@ def test_a_claimed_score_must_be_backed_by_the_audit_log(tmp: Path) -> None:
         mod.ROOT = real_root
 
 
+
+def test_the_audit_log_writer_and_its_reader_agree(tmp: Path) -> None:
+    """lib/audit.sh writes state/audit.log; check-agents.py judges scores by it.
+
+    The reader is well tested and the writer is not tested at all - `lib/audit.sh`
+    has zero mentions in this file. That is defensible on its own, since it is a
+    writer rather than a checker: it emits no findings, so the mutation audit I
+    just finished does not apply to it at all.
+
+    It is not defensible as a *seam*. The reader's entire job is to decide
+    whether a number in agent.conf is a measurement or a guess, and it decides
+    that by parsing lines someone else wrote. Every test of the reader hands it a
+    hand-built log string - `def line(...)` in the test above, assembled from the
+    format by hand.
+
+    So the two halves have never met. Nobody has ever taken a line that
+    `lib/audit.sh` actually produced and fed it to the code that trusts it.
+
+    The failure this leaves room for is specific and quiet. The reader needs two
+    fields by name: `agent` and `pct`. The writer passes both - `audit_close` is
+    called with `"pct=$PCT"` and the open call carries `agent=$AGENT` - but they
+    meet in the middle only if the writer's *normalisation* preserves the names
+    and values the reader looks for. And normalisation is aggressive on purpose:
+    keys are lowercased and cut to [a-z0-9_] at 24 characters, values are cut to
+    64 with everything outside a safe set turned into underscores. That is
+    correct, and it is exactly the sort of thing that silently renames a field.
+
+    Today it holds. This test is what makes that a fact rather than a hope, and
+    it is the difference between "the reader works" and "the reader works on the
+    data it will actually be given".
+
+    It also pins the second half of the loop: test-agent.sh writes
+    `AGENT_LAST_SCORE="$PCT%"` back into agent.conf, so the claim the reader
+    judges is produced by a `sed` on the same run that produced the log line. The
+    percent sign, the rounding, and the integer division in
+    `PCT=$(( PASS * 100 / TOTAL ))` are all places where the number written and
+    the number recorded could stop matching, and a mismatch there means a
+    correct agent is failed by its own audit trail.
+    """
+    import importlib.util
+    import re
+    import subprocess
+
+    spec = importlib.util.spec_from_file_location(
+        "aiorg_roundtrip", ROOT / "tools" / "check-agents.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # Not overridden, and deliberately: AIORG_AUDIT_LOG defaults to
+    # "$AIORG_STATE/audit.log", and in the project AIORG_STATE is <root>/state -
+    # which is exactly why check-agents.py reads ROOT/state/audit.log. Overriding
+    # the log path here would test the override and make the two halves meet only
+    # because the test lined them up by hand, which is the thing being ruled out.
+    # So give the writer a state dir under tmp and let the default land where the
+    # real reader looks.
+    state = tmp / "state"
+    log = state / "audit.log"
+
+    def write_with_the_real_writer(cases: int, passed: int) -> str:
+        """Run lib/audit.sh the way tools/test-agent.sh runs it."""
+        pct = passed * 100 // cases          # the same bash arithmetic, in python
+        env = dict(os.environ, AIORG_STATE=str(state))
+        script = f"""
+          set -u
+            . "{ROOT}/lib/audit.sh"
+            audit_open run agent=helpdesk runtime=ollama model=qwen3:8b \
+              role=fast safety=read-only network=limited think=off temp=0
+            audit_close verdict={'pass' if pct >= 80 else 'fail'} \
+              cases={cases} pass={passed} fail={cases - passed} skipped=0 \
+              pct={pct} threshold=80
+        """
+        r = subprocess.run(["bash", "-c", script], env=env,
+                           capture_output=True, text=True, timeout=60)
+        check(f"the writer ran clean for {pct}%", r.returncode == 0,
+              f"rc={r.returncode} stderr={r.stderr[:200]!r}")
+        return log.read_text(encoding="utf-8") if log.is_file() else ""
+
+    written = write_with_the_real_writer(cases=21, passed=17)
+    check("the writer produced exactly one record", written.count("\n") == 1,
+          f"got {written.count(chr(10))} lines: {written[:200]!r}")
+
+    fields = dict(m.group(1, 2) for m in re.finditer(r"(\w+)=([^\s]+)", written))
+    # The two names the reader cannot work without.
+    check("the real writer emits agent= under the name the reader looks up",
+          fields.get("agent") == "helpdesk", f"got {fields.get('agent')!r}")
+    check("the real writer emits pct= under the name the reader looks up",
+          fields.get("pct") == "80", f"got {fields.get('pct')!r}")
+    check("and the value survives normalisation as a number the reader can parse",
+          fields.get("pct", "").replace(".", "", 1).isdigit(),
+          f"pct={fields.get('pct')!r} is not numeric")
+    check("dur= is a bare number of seconds, not a decorated string",
+          re.fullmatch(r"\d+s", fields.get("dur", "")) is not None,
+          f"dur={fields.get('dur')!r}")
+
+    # Now the seam itself: a log written by the real writer, judged by the real
+    # reader, with the claim written the way test-agent.sh writes it.
+    def judged(claimed: str) -> tuple[list[str], list[str]]:
+        agent_dir = tmp / "agents" / "helpdesk"
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "agent.conf").write_text(
+            f'AGENT_NAME="helpdesk"\nAGENT_LAST_SCORE="{claimed}"\n',
+            encoding="utf-8")
+        saved = mod.ROOT
+        try:
+            mod.ROOT = tmp
+            rep = mod.Report()
+            mod.check_last_score_is_backed([agent_dir], rep)
+            return rep.errors, rep.warnings
+        finally:
+            mod.ROOT = saved
+
+    # test-agent.sh writes the percent sign into agent.conf, and the reader
+    # strips it. If either side changed, this is where it shows.
+    errs, warns = judged("80%")
+    check("a score written by the real caller, with its %, is backed by the real log",
+          not errs, f"errors={errs[:1]}")
+    check("and 17 of 21 cases is not a warning about a handful of cases",
+          not warns, f"warnings={warns[:1]}")
+
+    errs, _ = judged("100")
+    check("an inflated claim is still rejected against a real log line",
+          len(errs) == 1 and "higher than any score" in errs[0], f"{errs[:1]}")
+
+    # Rounding: 17/21 is 80.95%, bash integer division records 80, and
+    # test-agent.sh writes 80% back. All three agree today; if the arithmetic or
+    # the sed ever disagree, the agent fails its own audit trail.
+    errs, _ = judged("81")
+    check("a score above the recorded integer division is inflation, not rounding",
+          len(errs) == 1, f"errors={errs[:1]}")
+
+    # 21 cases, not a handful, so the same run must not warn when the claim is
+    # honest. Already asserted above; this documents why the count matters.
+    check("the recorded cases= is the full suite, not the small-run shape",
+          fields.get("cases") == "21", f"cases={fields.get('cases')!r}")
+
+    # A failed probe writes verdict=error and no pct, and the reader must not
+    # read that as evidence of a score.
+    faildir = tmp / "failed" / "state"
+    env = dict(os.environ, AIORG_STATE=str(faildir))
+    script_failed = f"""
+      set -u
+      . "{ROOT}/lib/audit.sh"
+      audit_open run agent=helpdesk
+      audit_close verdict=error reason=died-before-finishing exit_code=1
+    """
+    r = subprocess.run(["bash", "-c", script_failed], env=env,
+                       capture_output=True, text=True, timeout=60)
+    failed_line = (faildir / "audit.log").read_text(encoding="utf-8")
+    ffields = dict(m.group(1, 2) for m in re.finditer(r"(\w+)=([^\s]+)", failed_line))
+    check("a crashed run records no pct, so it is not evidence for a score",
+          ffields.get("agent") == "helpdesk" and "pct" not in ffields,
+          f"got {ffields}")
+
+
 def test_check_agents_reaches_a_verdict(tmp: Path) -> None:
     """The agent checker must finish and print a verdict, not die on the way.
 
@@ -3073,6 +3227,7 @@ def main() -> int:
             ("doctor exit code", lambda tmp: test_doctor_reports_failure_in_its_exit_code(tmp)),
             ("think matches the model", lambda tmp: test_think_matches_the_model_that_actually_runs(tmp)),
             ("a score must be backed", lambda tmp: test_a_claimed_score_must_be_backed_by_the_audit_log(tmp)),
+            ("the log writer and reader agree", lambda tmp: test_the_audit_log_writer_and_its_reader_agree(tmp)),
             ("the checker reaches a verdict", lambda tmp: test_check_agents_reaches_a_verdict(tmp)),
             ("every finding is asserted", lambda tmp: test_every_finding_is_asserted_somewhere(tmp)),
             ("the other unowned findings", lambda tmp: test_the_other_unowned_findings(tmp)),
