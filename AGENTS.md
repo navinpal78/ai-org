@@ -116,7 +116,7 @@ Complete and structurally validated:
 | `storyteller` | 45 | read-only | read | Long-form fiction. Read-only because a story lives in the reply, not because acting is dangerous. Weighted against the good-looking empty story |
 | `personal` | 18 | read-only | read | Private offline companion for adult/kink and technical conversation. Unfiltered in *tone*, read-only on the *machine* - the two are unrelated. Built 2026-09-27, the last of the non-GPU agents |
 
-607 test cases, all structurally valid, plus 359 assertions in
+607 test cases, all structurally valid, plus 369 assertions in
 `tests/test_retrieval.py`. `./bootstrap.sh check` is **red** right now, on one
 known catalog bug and nothing else - see "What is still red" under *The
 monoculture* below for why that is deliberate and what to do about it. It also
@@ -560,7 +560,7 @@ assertions in `test_independence_survives_every_hardware_tier`.
 
 **What is still red, and why it cannot be fixed by adding a candidate.** As of
 2026-09-26 `./bootstrap.sh check` is **red** on exactly one thing: the 28-48GB
-band, 1 error, with 607 cases and 359 assertions otherwise clean. The owner's
+band, 1 error, with 607 cases and 369 assertions otherwise clean. The owner's
 earlier choice was to leave it red and revisit when the GPU arrives rather than
 scope the guarantee to a card band; that decision covered the low band too, and
 the low band has now been fixed on the owner's instruction, which supersedes it
@@ -1050,7 +1050,7 @@ alongside the untrusted page text, on the reasoning that the injection warning
 system slot is the one place page text cannot reach, so the SOUL and the warning
 both belong there.
 
-`tests/test_retrieval.py` (359 assertions) starts its own loopback server and
+`tests/test_retrieval.py` (369 assertions) starts its own loopback server and
 asserts every one of those refusals, and runs as part of `./bootstrap.sh check`.
 
 ### The gap the research department did not close

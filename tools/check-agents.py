@@ -658,11 +658,19 @@ def check_reporting_graph(dirs: list[Path], rep: Report) -> None:
 
     # a parent must be a real agent
     orphans = sorted(f"{a} -> {p!r}" for a, p in parent.items() if p and p not in known)
+    orphan_agents: set[str] = set()
+    human_parented: set[str] = set()
     for o in orphans:
         agent, _, p = o.partition(" -> ")
         p = p.strip("'\"")
         if p == "human":
-            continue                       # an explicit non-agent parent
+            # An explicit non-agent parent, and a legitimate one: a human
+            # supervising an agent directly, with no officer above them. It
+            # terminates the chain on purpose, so it is a valid terminus and not
+            # a missing link.
+            human_parented.add(agent)
+            continue
+        orphan_agents.add(agent)
         rep.error(
             agent,
             f"AGENT_REPORTS_TO='{p}' but there is no agent called '{p}'. "
@@ -687,6 +695,7 @@ def check_reporting_graph(dirs: list[Path], rep: Report) -> None:
     # shouts thirteen identical lines trains people to skim past it, and the
     # one real mistake is buried in the noise.
     reported: set[frozenset[str]] = set()
+    in_cycle: set[str] = set()
     for start in sorted(parent):
         path: list[str] = []
         index: dict[str, int] = {}
@@ -695,6 +704,10 @@ def check_reporting_graph(dirs: list[Path], rep: Report) -> None:
             if cur in index:
                 cycle = path[index[cur]:]
                 key = frozenset(cycle)
+                # Tracked whether or not this cycle was already reported, so the
+                # membership set is complete and does not depend on which agent
+                # happened to be walked first.
+                in_cycle.update(cycle)
                 if key not in reported:
                     reported.add(key)
                     shown = " -> ".join(cycle + [cycle[0]])
@@ -712,11 +725,44 @@ def check_reporting_graph(dirs: list[Path], rep: Report) -> None:
                 break                       # already reported as an orphan
             cur = nxt
 
-    # a chain nobody terminates is an org chart with a missing link
+    # A chain nobody terminates is an org chart with a missing link.
+    #
+    # One reporting error per agent, and the most specific one available.
+    #
+    # This block is where the noise was, and it took two rounds to see all of it.
+    # The cycle check above deduplicates on purpose - one finding per cycle,
+    # because a checker that shouts the same line once per agent trains people to
+    # skim - and then this check put the noise straight back: a three-agent cycle
+    # produced the one good error PLUS three identical "does not lead to the top"
+    # lines, attributed to three different agents, naming a root they are not
+    # connected to at all. Four errors for one mistake, three pointing
+    # somewhere else. Found by auditing this function with no test to guide it,
+    # 2026-09-27.
+    #
+    # Then the same thing one branch over: an agent pointing at a typo'd parent
+    # was reported as an orphan AND as failing to reach the top, which is a
+    # second guess dressed as a finding and points at the wrong place. The
+    # orphan's message is the actionable one - "build it, or point at one that
+    # exists" - so the agent is excluded here too.
+    #
+    # Only the agent that IS the orphan is excluded, not everything downstream
+    # of one. An agent reporting to an orphan is a real, separate problem and
+    # still gets its own line, because the reader needs to know the blast radius
+    # rather than infer it.
+    #
+    # And `human_parented` is the third exemption, added because this check
+    # failed an agent for using the escape hatch the orphan check explicitly
+    # grants it: "parent must be a real agent" skips `human`, and then
+    # "does not lead to the top" fired on exactly that agent, naming a root it was
+    # never connected to. Three of this function's four rules disagreed with each
+    # other about the same tree, which is the thing to be most careful about when
+    # four rules read one file.
     if roots:
         unreachable = sorted(
             a for a in parent
-            if a not in roots and _chain_root(a, parent) not in roots
+            if a not in roots and a not in in_cycle and a not in orphan_agents
+            and a not in human_parented
+            and _chain_root(a, parent) not in roots
         )
         for a in unreachable:
             rep.error(a, f"does not lead to the top of the org (root: {', '.join(roots)})")

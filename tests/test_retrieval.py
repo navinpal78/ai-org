@@ -1378,6 +1378,138 @@ def test_check_cases_catches_its_own_failure_modes(tmp: Path) -> None:
           "only the first four columns are read, so this is recoverable")
 
 
+def test_reporting_graph_failure_modes(tmp: Path) -> None:
+    """Three real bugs in the org-chart check, found by auditing it with no test.
+
+    The second half of the coverage audit. `check_reporting_graph` had four error
+    sites and no test, and unlike `check_cases` - which turned out to be sound -
+    this one was wrong three times, in the same direction every time.
+
+    All three are NOISE, which is the expensive direction. A missing check makes
+    you look in the wrong place; a check that cries wolf three times for one
+    mistake makes you stop reading, and the project has already paid for that
+    lesson once (`AGENT_INDEPENDENT_OF`'s blanket parent-must-differ rule fired
+    eight times on a healthy tree and had to be reverted).
+
+    The bugs, in the order the audit found them:
+
+    1. **A three-agent cycle produced four errors, not one.** The cycle check
+       deduplicates on purpose and reported it correctly - then the "does not
+       lead to the top of the org" check immediately re-added one identical line
+       per agent, attributed to three different agents and naming a root none of
+       them was connected to. The dedup was undone one function later.
+    2. **An agent pointing at a typo'd parent got two errors.** One naming the
+       typo, one claiming it failed to reach the top. The second is a guess
+       dressed as a finding, and it points somewhere the fix is not.
+    3. **`AGENT_REPORTS_TO="human"` was permitted and then failed.** The orphan
+       check explicitly skips `human` as a non-agent parent; the unreachable
+       check then fired on exactly that agent. Three of the function's four rules
+       disagreed with each other about the same tree, which is the thing to be
+       most careful about when several rules read one file.
+
+    None of the three fires on the real tree today, which is precisely why they
+    survived: the current org chart happens to avoid every one of them.
+
+    The counter-assertion matters as much as the bug assertions. Deduplication is
+    only correct if it is per *distinct fault*, so two separate cycles must both
+    be reported, and an agent reporting to an orphan must still be reported even
+    though the orphan itself is exempted. A fix that silenced the noise by
+    widening the exemption would pass every test above and be worse than the bug.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "aiorg_reporting", ROOT / "tools" / "check-agents.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class Rep:
+        def __init__(self) -> None:
+            self.errors: list[str] = []
+            self.warnings: list[str] = []
+
+        def error(self, agent: str, msg: str) -> None:
+            self.errors.append(msg)
+
+        def warn(self, agent: str, msg: str) -> None:
+            self.warnings.append(msg)
+
+    counter = 0
+
+    def graph(spec_map: dict[str, str]) -> list[str]:
+        """Build a throwaway org chart and return its error messages.
+
+        A fresh directory per call, which the first version got wrong in a way
+        worth naming: it reused one path, so the second call raised
+        FileExistsError and the third would have inherited the first call's
+        agents - `graph({"ceo": "", "a": "ceo"})` reporting on a directory that
+        also contained a stray `d` pointing at nothing. The suite died with a
+        traceback, and on a checker whose entire job is to find structural
+        breakage, a test that crashes the run before finishing is the same
+        failure as a checker that crashes the build: it validates nothing and
+        still looks red.
+        """
+        nonlocal counter
+        counter += 1
+        base = Path(tmp) / f"org{counter}"
+        base.mkdir(parents=True)
+        dirs = []
+        for name, reports_to in spec_map.items():
+            d = base / name
+            d.mkdir()
+            (d / "agent.conf").write_text(
+                f'AGENT_REPORTS_TO="{reports_to}"\n', encoding="utf-8")
+            dirs.append(d)
+        rep = Rep()
+        mod.check_reporting_graph(dirs, rep)
+        return rep.errors
+
+    # The three bugs, each pinned at the count that is actually correct.
+    check("a three-agent cycle is ONE error, not one per agent",
+          len(graph({"ceo": "", "a": "b", "b": "c", "c": "a", "d": "ceo"})) == 1,
+          "the cycle check deduplicates, and the unreachable check must not "
+          "put the same noise back")
+
+    check("an agent pointing at a typo'd parent is ONE error",
+          len(graph({"ceo": "", "a": "ceo", "b": "geost"})) == 1,
+          "the orphan message is the actionable one; a second 'does not reach "
+          "the top' points at the wrong place")
+
+    check('an agent parented to "human" is not reported at all',
+          not graph({"ceo": "", "a": "human", "b": "ceo"}),
+          "the orphan check explicitly permits a non-agent parent, so the "
+          "unreachable check must not fail the agent for using it")
+
+    # Deduplication is per distinct fault. Both of these would pass if the fix
+    # had silenced cycles and typos by making the exemptions too wide.
+    two_cycles = graph({"ceo": "", "a": "b", "b": "a", "c": "d", "d": "c"})
+    check("two separate cycles are both reported", len(two_cycles) == 2,
+          f"{len(two_cycles)} errors, expected one per cycle")
+    check("each cycle names its own members",
+          any("a, b" in e for e in two_cycles) and any("c, d" in e for e in two_cycles),
+          f"{two_cycles}")
+    downstream = graph({"ceo": "", "a": "ceo", "b": "geost", "c": "b"})
+    check("an agent reporting to an orphan is still reported",
+          len(downstream) == 2 and any("geost" in e for e in downstream),
+          f"the blast radius is real information: {downstream}")
+
+    # The faults that were already right, kept so they cannot regress.
+    check("a nonexistent parent is named, with the known agents listed",
+          (lambda e: len(e) == 1 and "geost" in e[0] and "ceo" in e[0])(
+              graph({"ceo": "", "b": "geost"})),
+          f"{graph({'ceo': '', 'b': 'geost'})}")
+    check("two roots is an error naming both",
+          (lambda e: len(e) == 1 and "must be unique" in e[0])(
+              graph({"a": "", "b": "", "c": "a"})),
+          f"{graph({'a': '', 'b': '', 'c': 'a'})}")
+    check("a self-loop is one cycle error, not a hang",
+          len(graph({"ceo": "", "a": "a", "b": "ceo"})) == 1,
+          f"{graph({'ceo': '', 'a': 'a', 'b': 'ceo'})}")
+    check("a deep chain is fine",
+          not graph({"ceo": "", "cto": "ceo", "a": "cto", "b": "a"}),
+          f"{graph({'ceo': '', 'cto': 'ceo', 'a': 'cto', 'b': 'a'})}")
+
+
 def test_doctor_finishes_without_an_nvidia_gpu(tmp: Path) -> None:
     """`bootstrap.sh doctor` must reach its verdict on a machine with no GPU.
 
@@ -1897,6 +2029,7 @@ def main() -> int:
             ("independence checker catches collisions", lambda tmp: test_independence_checker_catches_an_injected_collision(tmp)),
             ("independence flags a shared model family", lambda tmp: test_independence_flags_same_family_different_size(tmp)),
             ("check_cases catches its own failure modes", lambda tmp: test_check_cases_catches_its_own_failure_modes(tmp)),
+            ("reporting graph failure modes", lambda tmp: test_reporting_graph_failure_modes(tmp)),
             ("check runs every step", lambda tmp: test_check_runs_every_step_even_when_one_fails(tmp)),
             ("doctor without nvidia gpu", lambda tmp: test_doctor_finishes_without_an_nvidia_gpu(tmp)),
             ("doctor exit code", lambda tmp: test_doctor_reports_failure_in_its_exit_code(tmp)),

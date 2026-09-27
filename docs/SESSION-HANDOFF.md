@@ -2497,3 +2497,85 @@ check, it loses every score quietly, which is strictly worse than a red build.
 
 **State:** 16 agents, 607 cases, 359 assertions, **1 error** (28-48GB auditor
 band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.
+
+
+---
+
+# 2026-09-27 - the coverage audit's second half found three real bugs
+
+`check_reporting_graph`: 4 error sites, no test. Unlike `check_cases`, which was
+sound, this one was **wrong three times, all in the same direction - noise.**
+
+That is the expensive direction. A missing check sends you to the wrong place; a
+check that cries wolf three times for one mistake teaches you to skim, and this
+project has already paid for that lesson once (`AGENT_INDEPENDENT_OF`'s blanket
+parent-must-differ rule fired eight times on a healthy tree and was reverted).
+
+## 1. A three-agent cycle produced four errors, not one
+
+The cycle check deduplicates deliberately - its own comment says a checker that
+"shouts thirteen identical lines trains people to skim" - and it worked. Then
+`check_reporting_graph`'s next block put the noise straight back: one identical
+"does not lead to the top of the org" line per agent, attributed to three
+different agents, **naming a root none of them was connected to.** The dedup
+was undone one function later, by a rule that had not read the rule above it.
+
+## 2. An agent pointing at a typo'd parent got two errors
+
+`b -> geost` reported the orphan ("there is no agent called 'geost' - build it,
+or point at one that exists") *and* claimed `b` failed to reach the top. The
+second is a guess dressed as a finding, and it points somewhere the fix is not.
+
+## 3. `AGENT_REPORTS_TO="human"` was permitted, then failed
+
+The orphan check explicitly skips `human` as a legitimate non-agent parent. The
+unreachable check then fired on exactly that agent. **Three of the function's
+four rules disagreed with each other about the same tree**, which is the thing to
+be most careful about when several rules read one file - and the failure mode
+here was not a missing check but *checks that contradict each other*.
+
+None of the three fires on the real tree today. That is precisely why they
+survived: the current org chart happens to avoid every one of them.
+
+## The fix is one rule, and the counter-assertions matter more than the bug ones
+
+**One reporting error per agent, and the most specific one available.** Cycles
+and orphans and human-parented agents are exempt from the unreachable check,
+because each already produced a better message. Only the agent that *is* the
+orphan is exempt, not everything downstream - an agent reporting to an orphan
+still gets its own line, because blast radius is information the reader needs
+rather than infers.
+
+Deduplication is only correct if it is per *distinct fault*, and that is what the
+test pins hardest:
+
+    {"ceo":"", "a":"b","b":"a","c":"d","d":"c"}  -> 2 errors, one per cycle
+    {"ceo":"", "b":"geost", "c":"b"}             -> 2 errors, typo + blast radius
+
+A fix that silenced the noise by widening the exemption would pass every
+bug assertion above and be **worse** than the bug, so both are asserted.
+
+## Proven by mutation, three ways
+
+| Mutation | Caught by |
+|---|---|
+| remove all three exemptions | all three bug assertions |
+| stop tracking `human` | only the `human` assertion - correctly precise |
+| stop tracking cycle membership | the cycle, two-cycle and self-loop assertions (6 errors) |
+
+## One process note, and it is not a small one
+
+My first version of this test **crashed the suite.** `graph()` reused one
+directory, so the second call raised `FileExistsError` and the run died with a
+traceback before finishing. On a checker whose entire job is finding structural
+breakage, a test that crashes the run validates nothing while still looking red -
+the same failure as a checker that crashes the build, which is what
+`test_check_agents_reaches_a_verdict` exists to catch. Found because I looked at
+the empty output instead of assuming the change was fine; an empty result from a
+check you just edited is the shape of the `nvidia-smi` regression again.
+
+**Still untested, 11 call sites:** `check_runtime_registry` (7),
+`check_readme_table` (3), `check_no_hardcoded_loopback` (1, a warning only).
+
+**State:** 16 agents, 607 cases, **369 assertions**, **1 error** (28-48GB auditor
+band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.
