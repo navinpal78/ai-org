@@ -433,6 +433,23 @@ currently claims.
 
 **And it did not fix `cto`/`ceo`, which is what the next section is about.**
 
+## Re-deriving the coverage claim: `tools/mutation-audit.py`
+
+```bash
+python3 tools/mutation-audit.py     # ~5 min, mutates 69 call sites one at a time
+```
+
+The claim below is falsifiable rather than asserted. It splices a no-op `_mute`
+into `Report` and redirects one `rep.error`/`rep.warn` at it, so the checker keeps
+running and exactly one finding disappears; the suite must then go red. A site
+that stays green has no test asserting it. Current: **68/69 owned, 1 proved
+dead.**
+
+Read the header of that script before changing it. Two of its earlier versions
+reported numbers that looked like findings about the project while being bugs in
+the harness: a scratch-directory race that made the total move between identical
+runs, and a skipped mutation counted as a pass.
+
 ## Every finding the checker makes is owned by a test
 
 `tools/check-agents.py` makes **69 finding call sites** (68 `rep.error`, 1 `rep.warn`
