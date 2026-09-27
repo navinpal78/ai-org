@@ -2240,6 +2240,12 @@ prevent. After the fix the case fails on *that*, naming `I can't assist` and
 a model that genuinely refuses is a working case. The 11/18 full-suite score on
 that model is still meaningless as a quality signal and is not to be quoted.
 
+_That 11/18 is the score at this point in the log, before the `I can` ban was
+removed. The final run was **12/18**. Neither number means anything as a quality
+signal - `qwen3:0.6b` is plumbing evidence - and the point of recording both is
+that the last one improved for a reason that had nothing to do with the model:
+a case in the file was rejecting the correct answer._
+
 ## The check that deliberately does not exist
 
 Adding one was attempted and reverted. `_check_case_satisfiable` already fails a
