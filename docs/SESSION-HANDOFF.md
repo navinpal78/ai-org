@@ -2678,3 +2678,109 @@ extrapolating from.
 
 **State:** 16 agents, 607 cases, **397 assertions**, **1 error** (28-48GB auditor
 band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.
+
+
+---
+
+# 2026-09-27 - the audit closes: the last two functions, and the audit's own lesson
+
+`check_no_hardcoded_loopback` (1 site) and `check_readme_table` (3). Both
+documentation-shaped, and both held a finding about the CHECKER rather than the
+tree. **Every function in `check-agents.py` that can emit a finding now has a
+test that proves it emits one.**
+
+## The loopback check was not scanning `tools/`
+
+Its docstring, and `AGENTS.md` rule 12, both claim it warns on any script that
+names the model server directly. That was **false for the six scripts most likely
+to name it** - `tools/test-agent.sh` and `tools/run-agent.sh` are the two that
+actually *call* the server. A hardcoded `127.0.0.1` in a curl there would have
+passed the check built to catch exactly that, and the symptom is the silent one:
+the script inspects the wrong machine and reports the local server as healthy
+while the GPU sits on another box. Nothing crashed. Nothing went red.
+
+Verified in both directions, because "I added tools/ to the glob" is not evidence
+that it works: injecting a real violation into `tools/test-agent.sh` makes the
+check name the file and the line, and reverting the `tools/` scan makes the
+**same violation pass**.
+
+The tree was clean, so this was a hole in the instrument rather than a live bug -
+the better of the two ways to find it, and the argument for auditing a green tree.
+
+## A rule that checked nothing, and could not be made to check anything
+
+    stale = sorted(listed - built - set(re.findall(<same pattern>, text)))
+
+The third set is a **superset** of `listed` - same regex, minus the trailing
+column - so the expression is identically empty for every input. It computed
+nothing, and nothing read it. Third instance of this project's most reliable bug
+shape: a rule that looks like it checks something and does not.
+
+**It is not implementable, and that is the part worth keeping.** The README table
+has no status column, so a row for a planned agent is indistinguishable from a
+row for a deleted one: `artist` and `director` are both listed, neither is on
+disk, and both are supposed to be there. Deleting an agent leaves exactly the
+same evidence as never having built it. **Anyone "fixing" that line would have
+turned two planned agents into two errors on the first run**, so the test now
+asserts the expression is *dead* rather than asserting it is *correct* - a
+trap-detector, not a coverage gap.
+
+## The audit's own lesson, and it is the best one in this log
+
+The first version of the tools/ assertion re-derived the file list **inside the
+test** and asserted against that:
+
+    for sub in ("scripts", "lib", "tools"):
+        would_scan.extend(p.name for p in (ROOT / sub).glob("*.sh"))
+    check("tools/test-agent.sh is among the files the check reads", ...)
+
+Mutation A - delete the `tools/` scan from the checker - left the suite at
+**413 passed, nothing red.** The assertion was checking that the *test's own
+list* contained the file. It could not fail, and it was buying confidence it had
+not earned, in a commit whose entire subject was a test that could not fail.
+
+It was caught because the mutation was run and the expected red did not arrive,
+and the instinct was to suspect the assertion rather than to trust it. The fix
+is to load `check-agents.py` **from a fixture tree** so `__file__` resolves
+there, inject a violation into each of the three directories in turn, and assert
+the finding. Now `tools/run-agent.sh` failing to be scanned turns the suite red,
+which is the only property worth having.
+
+**Four mutations, four reds**, all hitting the right assertion:
+
+| Mutation | Caught by |
+|---|---|
+| `tools/` scan removed | the fixture-tree violation in `tools/run-agent.sh` |
+| comment skip removed | both real-tree and fixture assertions |
+| README heading check removed | both heading assertions |
+| "lists agents but none on disk" removed | both of its assertions |
+
+## Three helper mistakes in one session, one shape
+
+`graph()`'s shared temp directory, `run()`'s leaked `lib` fixture, and this
+`copytree` into a pre-created directory. All the same: **a fixture path set up
+before the call that fills it, or left over from the last caller.** All three
+failed loudly and none corrupted a result, which is the good version - but three
+of them in one session says the habit is worth naming, and the fix in every case
+is the same: a helper that touches a fixture should leave it in a known state
+regardless of what the caller did or what ran before.
+
+## Where the audit ended up
+
+| function | sites | result |
+|---|---|---|
+| `check_cases` | 9 | sound - the checker would have caught the `I can't` bug I fixed by hand |
+| `check_reporting_graph` | 4 | **3 bugs**, all noise |
+| `check_runtime_registry` | 7 | **6 crashes + a comment-only false pass** |
+| `check_no_hardcoded_loopback` | 1 | **coverage hole** - was not scanning `tools/` |
+| `check_readme_table` | 3 | **a rule that could not fire**, and cannot be made to |
+| `check_agent`, `check_independent_models`, `check_last_score_is_backed`, `check_think_matches_model`, `check_independence_survives_resolution` | 43 | already covered |
+| `test_check_agents_reaches_a_verdict` | - | pre-existing, and this is its second reason to exist |
+
+**13 assertions per site audited, 335 -> 415 across the day, and the yield was
+one crash cluster, three noise bugs, one coverage hole and one dead rule.** The
+argument for the audit is not that it found bugs - it is that **four of the five
+functions it looked at were wrong, in a tree whose `check` was passing.**
+
+**State:** 16 agents, 607 cases, **415 assertions**, **1 error** (28-48GB auditor
+band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.

@@ -1683,6 +1683,250 @@ def test_runtime_registry_never_crashes_on_bad_json(tmp: Path) -> None:
           f"{rep.warnings[:1]} / {rep.errors[:1]}")
 
 
+def test_readme_table_and_loopback_scan_cover_the_tree(tmp: Path) -> None:
+    """The last two untested functions. One had a hole, one had a rule that did nothing.
+
+    `check_no_hardcoded_loopback` and `check_readme_table`: 1 and 3 call sites,
+    no tests. Between them they hold two findings that are about the CHECKER
+    rather than about the tree, which is why documentation-shaped code is still
+    worth auditing.
+
+    ## The loopback check was not scanning `tools/`
+
+    Its own docstring, and AGENTS.md rule 12, both claim it warns on any script
+    that names the model server directly. That was **false for the six scripts
+    most likely to name it** - `tools/test-agent.sh` and `tools/run-agent.sh` are
+    the two that actually CALL the server. A hardcoded `127.0.0.1` in a curl
+    there would have passed the check meant to catch exactly that, and the
+    symptom is the silent one: the script inspects the wrong machine and reports
+    the local server as healthy while the GPU sits on another box. Nothing
+    crashed, nothing went red.
+
+    The tree was clean, so this was a hole in the instrument rather than a live
+    bug - the better of the two ways to find it, and the argument for running an
+    audit on a green tree. Verified by injecting a real violation into
+    `tools/test-agent.sh` and confirming the check names the file and line, and
+    then reverting the `tools/` scan and confirming the *same* violation passes.
+    Both directions, because "I added tools/ to the glob" is not evidence that
+    it works.
+
+    ## The stale-row check was a rule that checked nothing
+
+        stale = sorted(listed - built - set(re.findall(<same pattern>, text)))
+
+    The third set is a superset of `listed` - same regex, minus the trailing
+    column - so the expression is identically empty for every input. It computed
+    nothing and nothing read it. This is the third instance of the project's
+    most reliable bug shape: a rule that looks like it checks something and does
+    not.
+
+    **It is also not implementable, which is the part worth keeping.** The table
+    has no status column, so a row for a planned agent is indistinguishable from
+    a row for a deleted one: `artist` and `director` are both listed, neither is
+    on disk, and both are supposed to be there. Deleting an agent leaves exactly
+    the same evidence as never having built it. Anyone "fixing" that line would
+    have turned two planned agents into two errors on the first run - so the
+    assertion below is a trap-detector, not a coverage gap.
+    """
+    import importlib.util
+    import re
+
+    spec = importlib.util.spec_from_file_location(
+        "aiorg_readme", ROOT / "tools" / "check-agents.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class Rep:
+        def __init__(self) -> None:
+            self.errors: list[str] = []
+            self.warnings: list[str] = []
+
+        def error(self, agent: str, msg: str) -> None:
+            self.errors.append(msg)
+
+        def warn(self, agent: str, msg: str) -> None:
+            self.warnings.append(msg)
+
+    # --- the loopback check ------------------------------------------------
+    # It resolves its own root from __file__, so it cannot be pointed at a
+    # fixture tree. That is itself worth knowing: it means the only way to test
+    # it is against the real tree, so the assertions below are about the real
+    # tree's shape rather than about a synthetic one.
+    rep = Rep()
+    mod.check_no_hardcoded_loopback(rep)
+    check("the real tree has no hardcoded model server", not rep.warnings,
+          f"{rep.warnings[:2]}")
+    # --- the coverage hole, tested against a real fixture tree ------------
+    #
+    # `check_no_hardcoded_loopback` derives its root from `__file__`, so it
+    # cannot be pointed at a fixture by assigning to a global - the only way to
+    # give it a different tree is to load the module FROM a different tree. That
+    # is what this does, and it is the only version of this assertion that means
+    # anything.
+    #
+    # My first attempt re-derived the file list inside the test and asserted
+    # against *that*:
+    #
+    #     for sub in ("scripts", "lib", "tools"):
+    #         would_scan.extend(p.name for p in (ROOT / sub).glob("*.sh"))
+    #     check("tools/test-agent.sh is among the files the check reads", ...)
+    #
+    # which passed with the `tools/` scan deleted from the checker. It was
+    # asserting that the test's own list contained the file - a test that cannot
+    # fail, bought with the same confidence as one that can. Mutation A below
+    # turns the suite green with the bug present, and that is precisely how it was
+    # found: the mutation was run, nothing turned red, and the assertion was the
+    # suspect rather than the fix.
+    import shutil
+
+    # copytree creates the destination, so nothing is pre-created here. That
+    # note is here because getting it wrong was the third instance of one shape
+    # in this session: a fixture path created before the call that fills it, in
+    # `graph()`'s shared directory, in `run()`'s leaked lib file, and now here.
+    # All three failed loudly and none corrupted a result, which is the good
+    # version of this mistake - but three of them says the habit is worth naming.
+    fix = Path(tmp) / "fixtree"
+    for sub in ("scripts", "lib", "tools"):
+        shutil.copytree(ROOT / sub, fix / sub)
+    shutil.copy(ROOT / "bootstrap.sh", fix / "bootstrap.sh")
+    shutil.copy(ROOT / "tools" / "check-agents.py", fix / "tools" / "check-agents.py")
+
+    fspec = importlib.util.spec_from_file_location(
+        "aiorg_loopback_fixture", fix / "tools" / "check-agents.py")
+    fmod = importlib.util.module_from_spec(fspec)
+    fspec.loader.exec_module(fmod)
+
+    def fixture_findings() -> list[str]:
+        r = Rep()
+        fmod.check_no_hardcoded_loopback(r)
+        return r.warnings
+
+    check("a fixture tree with no violations is silent", not fixture_findings(),
+          f"{fixture_findings()[:2]}")
+
+    # The same violation, injected into each of the three directories. Before
+    # the fix, the third of these passed silently.
+    for sub, name in [("scripts", "40-verify.sh"), ("lib", "common.sh"),
+                      ("tools", "run-agent.sh")]:
+        target = fix / sub / name
+        keep = target.read_text(encoding="utf-8")
+        target.write_text(keep + "\ncurl -s http://127.0.0.1:11434/api/tags\n",
+                          encoding="utf-8")
+        try:
+            found = [w for w in fixture_findings() if name in w]
+            check(f"a violation in {sub}/{name} is found", len(found) == 1,
+                  f"{len(found)} findings naming {name}, expected 1: "
+                  f"{fixture_findings()[:2]}")
+        finally:
+            target.write_text(keep, encoding="utf-8")
+
+    check("and the fixture is clean again once reverted",
+          not fixture_findings(), f"{fixture_findings()[:2]}")
+
+    # The regex alone flags comments, and the line-level skip in the function is
+    # the only thing stopping that. My first version of this test asserted the
+    # regex would NOT match a comment, which is false - it matches the comment
+    # happily - and would have "passed" only by asserting the opposite of what
+    # the code does.
+    #
+    # The real tree settles it properly: it contains several comment lines that
+    # explain this exact rule, and the check reports none of them. So the skip is
+    # asserted against data that exists rather than against a fixture I invented.
+    pat = re.compile(r"curl[^\n]*127\.0\.0\.1|\$\{?AI_OLLAMA_URL")
+    comment_hits = 0
+    for sub in ("scripts", "lib", "tools"):
+        for f in (ROOT / sub).glob("*.sh"):
+            for line in f.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("#") and pat.search(line):
+                    comment_hits += 1
+    check("the real tree has comment lines the regex would match", comment_hits >= 2,
+          f"found {comment_hits}; without them this assertion tests nothing")
+    check("and the check reports none of them, so comments are skipped",
+          not rep.warnings and comment_hits >= 2,
+          "a comment explaining the rule must not be reported as breaking it")
+
+    # The narrowness is deliberate: a grep cannot tell a legitimate loopback (a
+    # container health check, a bind address) from a wrong one, so only a curl
+    # and a read of the generated literal count.
+    check("a real curl to loopback is a finding", bool(pat.search(
+        'curl -s http://127.0.0.1:11434/api/tags')), "")
+    check("reading the generated AI_OLLAMA_URL literal is a finding",
+          bool(pat.search('echo "$AI_OLLAMA_URL"')), "")
+    check("a non-curl loopback mention is not a finding", not pat.search(
+        "bind 127.0.0.1:11434 in the container mapping"),
+          "container health checks and bind addresses are legitimate")
+
+    # --- the README table --------------------------------------------------
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    listed = set(re.findall(r"^\|\s*`([a-z0-9-]+)`\s*\|", readme, re.M))
+    built = {d.name for d in (ROOT / "agents").iterdir()
+             if d.is_dir() and not d.name.startswith("_")}
+
+    check("every built agent is in the README table", not (built - listed),
+          f"undocumented: {sorted(built - listed)}")
+    check("the only unbuilt rows are the two known-planned agents",
+          set(listed - built) == {"artist", "director"},
+          f"got {sorted(listed - built)}")
+
+    # The trap: the deleted `stale` expression is asserted to be dead rather
+    # than to be correct, because "fixing" it is what would break the two
+    # planned agents. Pinned so the reasoning survives the deletion.
+    wider = set(re.findall(r"^\|\s*`([a-z0-9-]+)`", readme, re.M))
+    check("the deleted stale expression was identically empty",
+          listed - built - wider == set() and wider >= listed,
+          "it subtracted a superset of itself, so it could never have "
+          "reported a stale row no matter what the table said")
+
+    # A built agent with no row IS the drift this function exists to catch, so
+    # prove it fires rather than trusting the docstring.
+    rep = Rep()
+    mod.check_readme_table([ROOT / "agents" / "coder",
+                            ROOT / "agents" / "does-not-exist"], rep)
+    check("an undocumented agent is an error",
+          len(rep.errors) == 1 and "does-not-exist" in rep.errors[0],
+          f"{rep.errors[:1]}")
+    # Both warning branches, on a tree the function can actually be given. My
+    # first attempt here was wrong twice: it expected a warning from a README
+    # with no heading, and its own sample started with "#", so the heading
+    # branch could not fire; and it passed an empty agent list with an empty
+    # table, so the "lists agents but none exist" branch could not either. Two
+    # conditions that each had to be arranged rather than assumed.
+    r = _readme_reports(mod, ["no heading here", "| `coder` | 19 |"])
+    check("a README with no heading warns", len(r.warnings) >= 1
+          and "heading" in r.warnings[0], f"{r.warnings[:1]}")
+    check("a README listing agents with none on disk warns", len(r.warnings) == 2
+          and any("none exist on disk" in w for w in r.warnings),
+          f"{r.warnings[:1]}")
+    r = _readme_reports(mod, ["# has a heading", "| `coder` | 19 |"])
+    check("a correct README with no agents on disk is one warning, not two",
+          len(r.warnings) == 1, f"{r.warnings[:1]}")
+
+
+def _readme_reports(mod, lines: list[str]) -> Rep:
+    """Run check_readme_table against a synthetic README. Restores ROOT after."""
+    real_root = mod.ROOT
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    (d / "README.md").write_text("\n".join(lines), encoding="utf-8")
+    mod.ROOT = d
+    try:
+        class Sink:
+            errors: list[str] = []
+            warnings: list[str] = []
+
+            def error(self, agent: str, msg: str) -> None:
+                self.errors.append(msg)
+
+            def warn(self, agent: str, msg: str) -> None:
+                self.warnings.append(msg)
+
+        rep = Sink()
+        mod.check_readme_table([], rep)
+        return rep
+    finally:
+        mod.ROOT = real_root
+
+
 def test_doctor_finishes_without_an_nvidia_gpu(tmp: Path) -> None:
     """`bootstrap.sh doctor` must reach its verdict on a machine with no GPU.
 
@@ -2204,6 +2448,7 @@ def main() -> int:
             ("check_cases catches its own failure modes", lambda tmp: test_check_cases_catches_its_own_failure_modes(tmp)),
             ("reporting graph failure modes", lambda tmp: test_reporting_graph_failure_modes(tmp)),
             ("runtime registry survives bad json", lambda tmp: test_runtime_registry_never_crashes_on_bad_json(tmp)),
+            ("readme table and loopback scan", lambda tmp: test_readme_table_and_loopback_scan_cover_the_tree(tmp)),
             ("check runs every step", lambda tmp: test_check_runs_every_step_even_when_one_fails(tmp)),
             ("doctor without nvidia gpu", lambda tmp: test_doctor_finishes_without_an_nvidia_gpu(tmp)),
             ("doctor exit code", lambda tmp: test_doctor_reports_failure_in_its_exit_code(tmp)),

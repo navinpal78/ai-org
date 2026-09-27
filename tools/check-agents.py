@@ -369,9 +369,26 @@ def check_no_hardcoded_loopback(rep: Report) -> None:
     # the condition to the whole sum, so a missing bootstrap.sh silently yields
     # an empty list and the guard passes everything. Caught by pointing the
     # guard at a fixture tree that had no bootstrap.sh.
+    #
+    # tools/*.sh was missing from this list until 2026-09-27, and it was the
+    # worst directory to be missing: the six scripts in it include
+    # tools/test-agent.sh and tools/run-agent.sh, which are the two that actually
+    # CALL the model server, and AGENTS.md rule 12 claimed this check "warns on
+    # any script that names it directly". That claim was false for the scripts
+    # most likely to name it. A hardcoded 127.0.0.1 in a curl, or a read of the
+    # AI_OLLAMA_URL literal, in either of those files would have passed the check
+    # meant to catch exactly that - and the symptom is the silent one: the
+    # script inspects the wrong machine and reports the local server as healthy
+    # while the GPU sits on another box. Nothing crashed and nothing went red.
+    #
+    # Found by auditing this function's own failure modes with no test to guide
+    # it. The tree happened to be clean, so this was a hole in the instrument
+    # rather than a live bug - which is the better of the two ways to find it,
+    # and the reason the audit was worth running on a green tree.
     targets: list[Path] = []
     targets.extend((root / "scripts").glob("*.sh"))
     targets.extend((root / "lib").glob("*.sh"))
+    targets.extend((root / "tools").glob("*.sh"))
     if (root / "bootstrap.sh").exists():
         targets.append(root / "bootstrap.sh")
     targets.sort()
@@ -1431,9 +1448,26 @@ def check_readme_table(dirs: list[Path], rep: Report) -> None:
             f"agent nobody can find is not built, it is just there.",
         )
 
-    stale = sorted(listed - built - set(re.findall(r"^\|\s*`([a-z0-9-]+)`", text, re.M)) )
-    # planned agents legitimately have no directory; only flag rows that claim
-    # to be built, which the table marks by existing on disk
+    # There is deliberately NO check for a table row with no directory, and the
+    # line that used to try was the third instance of this project's most
+    # reliable bug shape: a rule that looks like it checks something and does not.
+    #
+    #     stale = sorted(listed - built - set(re.findall(<same pattern>, text)))
+    #
+    # The third set is a SUPERSET of `listed` - it is the same regex without the
+    # trailing column - so the expression is identically empty for every input.
+    # It computed nothing, and nothing read it.
+    #
+    # The check is not implementable anyway, and the reason is worth keeping.
+    # The table has no status column, so a row for a planned agent is
+    # indistinguishable from a row for a deleted one: `artist` and `director` are
+    # both listed and neither is on disk, and both are supposed to be there.
+    # Deleting an agent leaves the same evidence as never having built it, and
+    # this function cannot tell the difference. Anyone "fixing" this line would
+    # have turned two planned agents into two errors on the first run.
+    #
+    # The real drift risk is the one that IS caught: a directory with no row,
+    # which is what the errors above report.
     if listed and not built:
         rep.warn("readme", "README lists agents but none exist on disk")
 
