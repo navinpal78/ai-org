@@ -155,6 +155,50 @@ def known_runtimes() -> set[str]:
     return set(data.get("runtimes", {}).keys())
 
 
+def _has_adapter_def(lib_src: str, rid: str, kind: str) -> bool:
+    """True if lib/runtime.sh DEFINES _rt_<rid>_<kind>, rather than only naming it.
+
+    The original check was `f"_rt_{rid}_{kind}(" not in lib_src` - a substring
+    search over the whole file. That is satisfied by a call site, by a comment,
+    or by a definition that has been commented out, and each of those passes a
+    runtime that cannot actually run.
+
+    It defeats the check's own stated purpose, which is to catch "a runtime in
+    the registry with no adapter behind it" *before* it becomes "a confusing
+    error halfway through a test run". A comment is not an exotic way to hit
+    this: lib/runtime.sh line 78 already explains the adapter naming convention
+    in prose, so the file being read is a file where adapter names get written
+    next to words. One more parenthesis in that sentence and the check starts
+    certifying runtimes that do not exist.
+
+    Matches a definition instead: the name at the start of a line, not
+    commented out, followed by the body brace. The brace is the load-bearing
+    part, because all three legal forms have one and only a definition does:
+
+        _rt_ollama_probe() {        # the form this codebase uses
+        _rt_ollama_probe () {       # space before the parens
+        function _rt_ollama_probe { # keyword, and then no parens at all
+
+    An earlier version required the parentheses and so rejected the `function`
+    form outright, which would have been a check that fails on correct code -
+    the mirror image of the bug it was fixing. A call site has no brace, and a
+    comment is skipped before the pattern is even tried.
+
+    `re.escape` on the id because a runtime id is author-supplied text going
+    into a pattern.
+    """
+    pat = re.compile(
+        rf"^\s*(?:function\s+)?_rt_{re.escape(rid)}_{re.escape(kind)}"
+        rf"\s*(?:\(\s*\))?\s*\{{"
+    )
+    for line in lib_src.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        if pat.match(line):
+            return True
+    return False
+
+
 def check_runtime_registry(rep: Report) -> set[str]:
     """
     Check the registry itself, and return the ids it declares.
@@ -183,6 +227,37 @@ def check_runtime_registry(rep: Report) -> set[str]:
         rep.error("runtimes", f"config/runtimes.json could not be read: {exc}")
         return set()
 
+    # Everything below this point indexes into what json.loads returned, and
+    # json.loads is happy to return a list, a string or a number. A diagnostic
+    # that dies on malformed input is the worst failure mode there is, because
+    # it reports nothing at all while looking like it reported something: this
+    # function is called from main() before the per-agent checks, so a crash
+    # here leaves all 16 agents unvalidated and every other signal in the tree
+    # green. The exit code is 1, which is the same 1 the known
+    # model-independence error returns.
+    #
+    # Found 2026-09-27 by the coverage audit, in the one function that reads a
+    # file its users hand-edit. Six ways to crash it, every one of them ordinary
+    # user error rather than an exotic one:
+    #
+    #     {"runtimes": {"ollama": "ready"}}   a string where an object belongs
+    #     {"runtimes": {"ollama": ["ready"]}}  a list where an object belongs
+    #     [1, 2, 3]                            the top level is a list
+    #     "hello"   /   42                     the top level is a scalar
+    #
+    # All of them are AttributeError on `.get`, and a missing brace in a config
+    # file is not a programming error worth crashing over - it is the thing the
+    # check exists to describe.
+    if not isinstance(data, dict):
+        rep.error(
+            "runtimes",
+            f"config/runtimes.json must be a JSON object, but its top level is "
+            f"of type {type(data).__name__}. Found "
+            f"{len(data) if hasattr(data, '__len__') else data!r} - a stray "
+            f"comma or a missing brace does this.",
+        )
+        return set()
+
     runtimes = data.get("runtimes", {})
     if not isinstance(runtimes, dict) or not runtimes:
         rep.error(
@@ -199,12 +274,24 @@ def check_runtime_registry(rep: Report) -> set[str]:
             rep.error("runtimes", f"lib/runtime.sh is missing, so runtime '{rid}' has no adapter")
             continue
         for kind in ("probe", "chat"):
-            if f"_rt_{rid}_{kind}(" not in lib_src:
+            if not _has_adapter_def(lib_src, rid, kind):
                 rep.error(
                     "runtimes",
                     f"config/runtimes.json lists runtime '{rid}' but "
                     f"lib/runtime.sh has no _rt_{rid}_{kind} adapter",
                 )
+
+        # Same reasoning one level down, and it cannot be waved through as
+        # "the caller will only pass dicts" - the caller is json.loads, and it
+        # has no opinion on the difference.
+        if meta is not None and not isinstance(meta, dict):
+            rep.error(
+                "runtimes",
+                f"runtime '{rid}' must map to an object with at least a "
+                f"'status', but it maps to a {type(meta).__name__}. An entry "
+                f"written as a bare string or list is the usual cause.",
+            )
+            continue
 
         status = (meta or {}).get("status", "")
         if status and status != "ready":

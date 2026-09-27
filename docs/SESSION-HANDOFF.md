@@ -2579,3 +2579,102 @@ check you just edited is the shape of the `nvidia-smi` regression again.
 
 **State:** 16 agents, 607 cases, **369 assertions**, **1 error** (28-48GB auditor
 band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.
+
+
+---
+
+# 2026-09-27 - the second "checker crashes instead of failing", and it was live
+
+`check_runtime_registry`: 7 call sites, no test. The audit's highest hit rate so
+far, and the finding is the **second occurrence today of the worst bug class in
+the project.**
+
+## Six ways to crash the only function that reads a hand-edited file
+
+`config/runtimes.json` is the most user-edited config in the tree, and
+`check_runtime_registry` called `.get()` on whatever `json.loads` returned -
+twice, neither time checking it was a dict:
+
+    {"runtimes": {"ollama": "ready"}}    a string where an object belongs
+    {"runtimes": {"ollama": ["ready"]}}   a list where an object belongs
+    [1, 2, 3]                             the top level is a list
+    "hello"   /   42   /   null           the top level is a scalar
+
+All AttributeError. All ordinary user error, none exotic - a stray comma in a
+JSON file is not a programming mistake worth crashing over, it is the exact
+thing the check exists to describe.
+
+**Why this is the worst class.** The function is called from `main()` *before*
+the per-agent checks, so a crash there kills the entire run: **all 16 agents go
+unvalidated, every other signal in the tree reads green, and the exit code is 1
+- the same 1 the known model-independence error returns.** This is the second
+reason `test_check_agents_reaches_a_verdict` exists, and the same shape as the
+`_independence_pairs` NameError found earlier today: a diagnostic that reports
+nothing is indistinguishable from one that reports everything is fine.
+
+Found by probing the function's inputs, not by reading it - the code looks fine,
+because `.get()` on a dict is fine, and the type of the argument is checked
+somewhere else by the interpreter in a way that does not help.
+
+## The subtler half: an adapter that existed only in a comment passed
+
+The adapter check was a substring search over the whole of `lib/runtime.sh`:
+
+    if f"_rt_{rid}_{kind}(" not in lib_src:  -> error
+
+Satisfied by a **call site**, a **comment**, or a **commented-out definition** -
+and this file is a realistic place to hit it, because `lib/runtime.sh` line 78
+*already explains the adapter naming convention in prose*. One more parenthesis
+in that sentence and the check starts certifying runtimes that cannot run,
+which is the failure its own docstring says it exists to prevent.
+
+It now matches a definition, keyed on the **body brace** - all three legal shell
+forms have one and only a definition does:
+
+    _rt_ollama_probe() {         the codebase's form
+    _rt_ollama_probe () {        space before the parens
+    function _rt_ollama_probe {  keyword, and then no parens at all
+
+**The negative direction needed as much care as the positive one**, because
+"reject comments" is trivially satisfied by a pattern too strict for real code.
+An intermediate version required the parentheses and rejected `function name {`
+outright - a check that fails on correct code, the mirror image of the bug it
+was fixing. Caught by mutation D below, not by reading.
+
+## Proven by mutation, four ways
+
+| Mutation | Result |
+|---|---|
+| remove the top-level type guard | `AttributeError: 'list' object has no attribute 'get'` |
+| remove the per-runtime type guard | `AttributeError: 'str' object has no attribute 'get'` |
+| revert the adapter check to a substring search | 3 assertion failures |
+| tighten the pattern to reject `function name {` | 1 failure - **the false-positive direction** |
+
+28 new assertions. 369 -> 397.
+
+## The lesson I had to learn twice in one session
+
+Two test helpers in this session leaked state between calls, and both failed the
+same way - **quietly, on assertions that were correct**:
+
+1. The reporting-graph test reused one temp directory, so the second call raised
+   `FileExistsError` and the suite died with a traceback before finishing.
+2. This test's `run()` only rewrote `lib/runtime.sh` when a case passed one, so
+   the "one adapter commented out" fixture was still in place when "a healthy
+   registry is silent" ran - and that assertion failed for a reason that had
+   nothing to do with what it checked.
+
+Both times the innocent assertion got the blame, which is the dangerous
+direction: the instinct is to loosen the assertion, and here that would have
+deleted a real check and kept a leak. **A helper that inherits its predecessor's
+state is testing the previous test as much as this one.** Every call now
+rewrites both fixture files unconditionally.
+
+**Still untested, 4 call sites:** `check_readme_table` (3) and
+`check_no_hardcoded_loopback` (1, a warning only). Both are documentation-shaped
+rather than structural, so the expected yield is lower - but the yield on the
+last two functions was three bugs and six crashes, which is not a trend worth
+extrapolating from.
+
+**State:** 16 agents, 607 cases, **397 assertions**, **1 error** (28-48GB auditor
+band, unchanged), 2 informational warnings, 0 phantoms, 0 family warnings.

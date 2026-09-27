@@ -1510,6 +1510,179 @@ def test_reporting_graph_failure_modes(tmp: Path) -> None:
           f"{graph({'ceo': '', 'cto': 'ceo', 'a': 'cto', 'b': 'a'})}")
 
 
+def test_runtime_registry_never_crashes_on_bad_json(tmp: Path) -> None:
+    """The second instance of the worst bug class in this project, and it was live.
+
+    `check_runtime_registry` reads `config/runtimes.json` - a file its users edit
+    by hand, which makes it the most likely place in the tree for malformed input
+    - and immediately called `.get()` on whatever `json.loads` returned, twice,
+    without checking either was a dict. Six ordinary mistakes reached an
+    AttributeError:
+
+        {"runtimes": {"ollama": "ready"}}     a string where an object belongs
+        {"runtimes": {"ollama": ["ready"]}}    a list where an object belongs
+        [1, 2, 3]                              the top level is a list
+        "hello"   /   42                       the top level is a scalar
+
+    **Why this is the worst class and not a nuisance.** The function is called
+    from `main()` before the per-agent checks, so a crash here kills the whole
+    run: all 16 agents go unvalidated, every other signal reads green, and the
+    exit code is 1 - the same 1 the known model-independence error returns. That
+    is `test_check_agents_reaches_a_verdict` existing for a second reason, and
+    it is the same shape as the `_independence_pairs` NameError found earlier
+    today: a diagnostic that reports nothing is indistinguishable from one that
+    reports everything is fine.
+
+    The second half of this test is the subtler half. The adapter check was a
+    substring search over `lib/runtime.sh`, so a runtime whose adapter existed
+    only in a COMMENT passed - and `lib/runtime.sh` line 78 already explains the
+    adapter naming convention in prose, so that file is one where adapter names
+    get written next to words. It now matches a definition.
+
+    The negative direction is asserted just as hard, because "reject comments"
+    is trivially satisfiable by a pattern too strict to match real code: all
+    three legal shell definition forms must pass, including `function name {`
+    with no parentheses at all.
+    """
+    import importlib.util
+    import json
+
+    spec = importlib.util.spec_from_file_location(
+        "aiorg_runtimes", ROOT / "tools" / "check-agents.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class Rep:
+        def __init__(self) -> None:
+            self.errors: list[str] = []
+            self.warnings: list[str] = []
+
+        def error(self, agent: str, msg: str) -> None:
+            self.errors.append(msg)
+
+        def warn(self, agent: str, msg: str) -> None:
+            self.warnings.append(msg)
+
+    real_reg, real_lib = mod.RUNTIMES, mod.RUNTIME_LIB
+    reg = Path(tmp) / "runtimes.json"
+    lib = Path(tmp) / "runtime.sh"
+    lib.write_text("_rt_ollama_probe() {\n:\n}\n_rt_ollama_chat() {\n:\n}\n",
+                   encoding="utf-8")
+    good = json.dumps({"runtimes": {"ollama": {"status": "ready"}}})
+
+    def run(registry: str | None, adapters: str | None = None,
+            want_errors: int | None = None, with_ids: bool = False):
+        """Never allowed to raise - that is the point of the whole test.
+
+        BOTH files are rewritten on every call unless the caller asks otherwise.
+        An earlier version only rewrote lib/runtime.sh when a test passed one, so
+        whichever case ran last left its adapters behind for every case after it:
+        the "one real adapter and one commented out" fixture was still in place
+        when "a healthy registry is silent" ran, and that test failed for a
+        reason that had nothing to do with what it was checking.
+
+        This is the second time in this session that a test helper leaked state
+        between calls - the first was a shared directory in the reporting-graph
+        test. Both failed the same way: quietly, on assertions that were correct.
+        A helper that inherits its predecessor's state is testing the previous
+        test as much as this one, and the failure points at the innocent
+        assertion rather than at the leak.
+        """
+        mod.RUNTIMES, mod.RUNTIME_LIB = reg, lib
+        try:
+            if registry is None:
+                reg.unlink(missing_ok=True)
+            else:
+                reg.write_text(registry, encoding="utf-8")
+            lib.write_text(
+                "_rt_ollama_probe() {\n:\n}\n_rt_ollama_chat() {\n:\n}\n"
+                if adapters is None else adapters,
+                encoding="utf-8")
+            rep = Rep()
+            ids = mod.check_runtime_registry(rep)
+            if want_errors is not None and len(rep.errors) != want_errors:
+                check(f"expected {want_errors} error(s)", False,
+                      f"got {len(rep.errors)}: {rep.errors[:1]}")
+            return (rep, ids) if with_ids else rep
+        finally:
+            mod.RUNTIMES, mod.RUNTIME_LIB = real_reg, real_lib
+
+    # --- must not crash, must report -------------------------------------
+    for label, body in [
+        ("a runtime value that is a string", '{"runtimes": {"ollama": "ready"}}'),
+        ("a runtime value that is a list", '{"runtimes": {"ollama": ["ready"]}}'),
+        ("a top level that is a list", "[1, 2, 3]"),
+        ("a top level that is a string", '"hello"'),
+        ("a top level that is a number", "42"),
+        ("a top level that is null", "null"),
+    ]:
+        rep = run(body, want_errors=1)
+        check(f"{label} is reported, not raised on", bool(rep.errors),
+              f"got {rep.errors[:1]}")
+        check(f"{label} says what is wrong with the shape",
+              bool(rep.errors) and ("JSON object" in rep.errors[0]
+                                    or "must map to an object" in rep.errors[0]),
+              f"{rep.errors[:1]}")
+
+    # The other malformed inputs the function already handled, kept so the fix
+    # above cannot have been made by deleting the whole error path.
+    check("invalid JSON is reported", bool(run("{not json", want_errors=1).errors),
+          "a syntax error is the commonest way to break this file")
+    check("a missing registry is reported",
+          bool(run(None, want_errors=1).errors), "no registry at all")
+    check("an empty runtimes object is reported",
+          bool(run('{"runtimes": {}}', want_errors=1).errors), "")
+    check("a missing lib/runtime.sh is reported",
+          bool(run(good, adapters="", want_errors=1).errors), "")
+
+    # --- the adapter check: rejects names, accepts definitions ------------
+    for label, adapters in [
+        ("a commented-out definition", "#_rt_ollama_probe() {\n#_rt_ollama_chat() {\n"),
+        ("an indented comment", "   # _rt_ollama_probe() {\n   # _rt_ollama_chat() {\n"),
+        ("the name in prose", "# ollama -> _rt_ollama_chat is the adapter\n"),
+        ("a call site with no definition", '_rt_ollama_probe "$x"\n'),
+    ]:
+        rep = run(good, adapters=adapters)
+        check(f"an adapter that is only {label} is not accepted",
+              len(rep.errors) == 2,
+              f"{len(rep.errors)} errors, expected one per missing adapter")
+
+    for label, adapters in [
+        ("the codebase's own `name() {`", "_rt_ollama_probe() {\n}\n_rt_ollama_chat() {\n}\n"),
+        ("`function name {`, no parens",
+         "function _rt_ollama_probe {\n}\nfunction _rt_ollama_chat {\n}\n"),
+        ("`function name() {`",
+         "function _rt_ollama_probe() {\n}\nfunction _rt_ollama_chat() {\n}\n"),
+        ("a space before the parens", "_rt_ollama_probe () {\n}\n_rt_ollama_chat () {\n}\n"),
+    ]:
+        rep = run(good, adapters=adapters)
+        check(f"a real definition written as {label} is accepted",
+              not rep.errors,
+              f"{len(rep.errors)} errors, expected 0: {rep.errors[:1]}")
+
+    # One adapter present and one absent: exactly one error, naming the one.
+    rep = run(good, adapters="_rt_ollama_probe() {\n}\n#_rt_ollama_chat() {\n}")
+    check("one real adapter and one commented out gives one error",
+          len(rep.errors) == 1 and "chat" in rep.errors[0],
+          f"{rep.errors[:1]}")
+
+    # --- the parts that were already right --------------------------------
+    rep = run(good)
+    check("a healthy registry is silent", not rep.errors and not rep.warnings,
+          f"{rep.errors + rep.warnings}")
+    # The return value is not incidental: main() passes it to check_agent as the
+    # only list of runtime names an agent.conf is allowed to name, so a silent
+    # change to it would loosen that check without failing anything here.
+    check("it returns the declared ids, which check_agent depends on",
+          run(good, with_ids=True)[1] == {"ollama"},
+          f"got {run(good, with_ids=True)[1]}")
+
+    rep = run('{"runtimes": {"ollama": {"status": "planned"}}}')
+    check("a non-ready status is a warning, not an error",
+          len(rep.warnings) == 1 and not rep.errors,
+          f"{rep.warnings[:1]} / {rep.errors[:1]}")
+
+
 def test_doctor_finishes_without_an_nvidia_gpu(tmp: Path) -> None:
     """`bootstrap.sh doctor` must reach its verdict on a machine with no GPU.
 
@@ -2030,6 +2203,7 @@ def main() -> int:
             ("independence flags a shared model family", lambda tmp: test_independence_flags_same_family_different_size(tmp)),
             ("check_cases catches its own failure modes", lambda tmp: test_check_cases_catches_its_own_failure_modes(tmp)),
             ("reporting graph failure modes", lambda tmp: test_reporting_graph_failure_modes(tmp)),
+            ("runtime registry survives bad json", lambda tmp: test_runtime_registry_never_crashes_on_bad_json(tmp)),
             ("check runs every step", lambda tmp: test_check_runs_every_step_even_when_one_fails(tmp)),
             ("doctor without nvidia gpu", lambda tmp: test_doctor_finishes_without_an_nvidia_gpu(tmp)),
             ("doctor exit code", lambda tmp: test_doctor_reports_failure_in_its_exit_code(tmp)),
