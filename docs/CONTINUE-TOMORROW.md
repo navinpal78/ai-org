@@ -1,13 +1,32 @@
 # Continue tomorrow
 
-_Last updated 2026-09-27, late. The tree is under version control, both phantom
-model tags are closed, and every function in `check-agents.py` that can emit a
-finding now has a test proving it emits one. That last item is the one to know
-about: **4 of the 5 untested functions were wrong** - six crashes, three noise
-bugs, a coverage hole and a rule that could not fire - in a tree whose
-`./bootstrap.sh check` was passing the whole time. The full account is the last
-section of `docs/SESSION-HANDOFF.md`; `AGENTS.md` carries the per-function
-findings._
+_Last updated 2026-09-29. **Nothing is in progress and nothing is uncommitted.**
+15 commits, clean tree, pushed to a private `github.com/navinpal78/ai-org`.
+500 checks, 1 deliberate error._
+
+_What changed since the last version of this file, and the one thing worth
+knowing: **`tools/check-models.sh` had no tests at all.** It is the instrument
+behind the "0 phantoms" claim - the one that caught `qwen3:72b` and
+`qwen3-coder-next:80b` - and a mutation audit found **9 finding sites and 0
+owned.** Silencing any one of them left the suite green. It had been filed as
+"optional hardening, a tenth the size of the audit already done"; it was in fact
+the last instrument in the tree with nothing behind it. All nine are now owned,
+offline, and 472 -> 500 checks._
+
+_The second thing worth knowing is how that number nearly lied. The harness
+printed a clean **8/8 while every single mutation was dying** on an unbound
+variable, because it computed `asserted = n - green - skips` and a mutation that
+never ran was counted as a pass. Its self-test had never executed either - the
+guard tested a variable after defaulting it. Both are fixed, and the harness now
+refuses to print a number at all unless it has proved it can fail. The general
+lesson, in `AGENTS.md` under "The last instrument had no tests at all": **a
+coverage claim derived by subtracting failures from a constant cannot tell "the
+test caught it" from "nothing happened."**_
+
+_Three of the four Tier 1 owner decisions in `PENDING-WORK.md` are now closed:
+the handoff files are under Git, and there is a remote. The rest of the parked
+list is unchanged and is still waiting on the GPU box. **Do not re-derive it** -
+it is in `AGENTS.md` and `docs/SESSION-HANDOFF.md`._
 
 ## The one thing to type
 
@@ -47,7 +66,7 @@ wrong, and both were learned the expensive way.
 
 ## If you want a summary instead
 
-**16 of the 18 planned agents are built. 607 test cases, 415 retrieval
+**16 of the 18 planned agents are built. 607 test cases, 500 retrieval
 assertions.** The org chart is complete and now mechanically validated: `ceo`
 at the top, `cto` heading the technical department including security,
 `research-officer` heading the four research specialists. `personal` - the old
@@ -116,8 +135,13 @@ proves the *plumbing* works, not that any agent is good.
 
 ### What to build next
 
-Two agents left, and they are blocked on the same thing - a generation runtime
-this project does not have:
+**Nothing, unless you have decided to.** Every item below is blocked on the GPU
+box or on an owner decision, and no amount of work on this box unblocks any of
+them. This is the honest state of the project, not an oversight: the parts that
+can be built without a card are built and tested.
+
+The two unbuilt agents are blocked on the same thing - a generation runtime this
+project does not have:
 
 | Agent | State |
 |---|---|
@@ -226,18 +250,30 @@ the recommended hardware.
 
 ## Housekeeping
 
-- An `ollama serve` process (pid 85804) is still running, left over so the smoke
-  test could reach a model server. Harmless - `pkill ollama` stops it. Nothing
-  else is running.
+- The old `ollama serve` process from the smoke test has been stopped. Nothing of
+  mine is left running, and nothing needs to be for the next session.
 - The Ollama store holds `qwen3:0.6b` and `deepseek-r1:7b` only. A 0.5GB test
   model (`qwen2.5:0.5b`) was pulled to verify the thinking behaviour and has been
   removed again.
 - `state/` holds only the audit log and detect history, 12 KB. The research index
   is empty, which is expected.
-- The tree is 1.4 MB with no stray temp files.
+- The tree is 1.9 MB with no stray temp files.
 
 ## Done this session, not yet in the older sections above
 
+- **`tools/check-models.sh` is no longer untested** (commits `73238a1`,
+  `98e9108`). It had **9 finding sites and 0 owned** — the hand-written count in
+  `PENDING-WORK.md` said 5, and the two it had right by luck included the
+  phantom `[fail]` itself. All nine are now owned by
+  `test_check_models_catches_its_own_failure_modes`, offline, with a fake `curl`
+  on a hand-built `PATH`. 472 → 500 checks.
+  **The "3 of its 5 sites need a live Ollama or a real 404" reasoning was why
+  nobody had tried it, and it was wrong** — every one is reachable with a stub.
+- **A second mutation harness, `tools/mutation-audit.sh`**, for shell
+  instruments, kept separate from the python one on purpose: it finds sites by
+  grepping, and rule 19 is the reason not to merge two implementations of one
+  idea into something neither language can call. It is self-testing and refuses
+  to print a coverage number if it cannot prove it can fail.
 - **Round-trip test for the audit-log seam** (commits `371a2d8`, `f169415`).
   `lib/audit.sh` *writes* `state/audit.log`; `check-agents.py` judges every
   `AGENT_LAST_SCORE` by it. The two halves had never met — the reader's tests all
@@ -249,7 +285,6 @@ the recommended hardware.
   subtler one, a truncated *value* that leaves every key intact.
   460 → 472 checks.
 - **`lib/audit.sh` is explicitly NOT a findings-mutation-audit target** — it is a
-  writer with 0 finding call sites. `tools/check-models.sh` (5 finding sites) is
-  the only remaining instrument worth auditing, and it is optional: 3 of its 5
-  sites need a live Ollama or a real 404. The catalog is currently correct (0
-  phantoms), so this is hardening, not a known red.
+  writer with 0 finding call sites. That left `tools/check-models.sh` as the only
+  remaining instrument worth auditing, and it turned out not to be optional at
+  all. **No instrument in the tree is now unaudited.**

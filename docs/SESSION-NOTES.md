@@ -49,6 +49,49 @@ All committed. `git log --oneline`:
 | `70c6375` | committed the mutation harness so the claim can be re-derived |
 | `371a2d8` | round-trip test: audit.sh's writer and check-agents.py's reader |
 | `f169415` | documented the audit-log writer/reader seam |
+| `f873d81` | tracked the 3 handoff files that lived outside the repo |
+| `756a90d` | recorded the remote: pushed to a private `navinpal78/ai-org` |
+| `73238a1` | **owned all 9 findings in `check-models.sh`; built the shell mutation harness** |
+| `98e9108` | recorded that audit in AGENTS.md and the handoff |
+
+## Second session, 2026-09-28/29 — durability, then the last instrument
+
+Four things, in order, because that is the order they were safe to happen in.
+
+**1. The handoff files moved into the repo.** `SESSION-NOTES.md`,
+`CONTINUE-TOMORROW.md` and `PENDING-WORK.md` were the only piece of project state
+git did not cover. Password verified absent before staging. The `~/Work` copies
+were deleted afterwards, so there is now exactly one of each.
+
+**2. The repo got a remote** — private `github.com/navinpal78/ai-org`, 15
+commits. Until then it was only as durable as one disk. Every "no remote" and
+"untracked by git" claim in the docs was corrected in the same commit that made
+it false, because a doc that says "untracked" about something that is tracked is
+the kind of quietly-wrong claim this project keeps having to correct.
+
+**3. `tools/check-models.sh` had no tests at all.** PENDING-WORK item 7 called it
+"optional hardening". It was the instrument behind the "0 phantoms" claim, and a
+mutation audit found **9 finding sites, 0 owned** — the hand-written count said 5,
+and the two it had right by luck included the phantom `[fail]` itself. Now 9/9,
+all reachable offline with a fake `curl` on a hand-built `PATH`. 472 → 500.
+
+**4. The harness was the interesting part.** Writing it produced five bugs, four
+of which made the audit report a clean tree while measuring nothing. The worst
+was `asserted = n - green - skips`: a mutation that never ran was counted as a
+pass, so an unbound variable that killed all 8 sites printed a confident 8/8 with
+zero false passes. A claim derived by subtracting failures from a constant cannot
+tell "the test caught it" from "nothing happened" — which is the same lesson as
+the `nvidia-smi` regression and the stderr fixture, one level up. The self-test
+now gates it: the harness must report 0/2 on a target nothing tests, or it exits
+non-zero rather than print a number.
+
+The generalisable finding, and the one to carry forward: **three separate times
+the instrument was right and the thing pretending to be the instrument was
+wrong.** Twice in the stubs (the manifest URL puts the tag in the path, not after
+a colon; `${@: -1}` on the `/api/show` call is the `-d` payload, not the URL) and
+once in the site enumerator. Both stub traps are already documented in
+`AGENTS.md` for the *real* tool — the tests walked into them from the other
+direction.
 
 ### The audit, and the correction that matters
 
@@ -75,18 +118,20 @@ Mute one finding at a time; the suite must go red. Name-matching and line covera
 - a line tracer misses every finding provoked in a subprocess, and a line that *executes* while
   nothing asserts its output is the same false pass as a line that never runs
 - **two attempts in this session were wrong** (see `/tmp/opencode/session/notes.md` history below)
+- **a third, later: an unmeasured mutation counted as a pass.** See the second-session entry above.
+  This is the trap that survives every other fix, because the output looks perfect.
 
 ## Work in progress
 
-None. Tree is clean, everything committed.
+None. Tree is clean, everything committed and pushed.
 
-The mutation harness was living only in `/tmp`. It is now committed as
-`tools/mutation-audit.py` (root-resolving, documented, `python3 tools/mutation-audit.py`, ~5 min)
-so a future session does not have to rebuild it. **Not yet committed** — see Next steps.
+Both mutation harnesses are committed: `tools/mutation-audit.py` (the python
+checker, `70c6375`) and `tools/mutation-audit.sh` (the shell one, `73238a1`).
+Neither ever needed to live in `/tmp`.
 
 ## Blocked
 
-- **Owner decisions, all unchanged:**
+- **Owner decisions, three of six now closed:**
   | decision | cost of leaving it |
   |---|---|
   | `artist`/`director` — ComfyUI adapter, or author image specs a human runs? | 2 of 18 agents unbuilt |
@@ -111,12 +156,19 @@ so a future session does not have to rebuild it. **Not yet committed** — see N
    it, and the two had never met — the reader's tests all hand-built log lines. Now tested as a
    real round trip, with two mutations proving it can fail (a renamed KEY, and a truncated VALUE
    that leaves every key intact — the subtler one).
-3. Optional: **mutation-audit `tools/check-models.sh`** — 5 finding sites, 3 needing a live Ollama
-   or a real 404. Feasible (the registry path works, the tool runs clean, catalog has 0 phantoms)
-   but a tenth the size of the audit already done. Only worth it if the phantom-detection claim
-   needs hardening. The method is reusable: `python3 tools/mutation-audit.py`.
-3. Nothing else. Do not re-derive the parked list; it is in `AGENTS.md` and
-   `docs/SESSION-HANDOFF.md`.
+3. ~~Optional: mutation-audit `tools/check-models.sh`~~ — **DONE**, commits `73238a1` and `98e9108`.
+   It was called "5 finding sites, 3 needing a live Ollama or a real 404" and "a tenth the size of
+   the audit already done". Measurement said **9 sites, 0 owned** — the instrument behind the
+   "0 phantoms" claim had no tests at all — and all nine turned out to be reachable offline with
+   a fake `curl`, so the "needs a live server" reasoning was the reason nobody had tried. Now
+   9/9 owned, via `bash tools/mutation-audit.sh`.
+4. Nothing else in the tree. Do not re-derive the parked list; it is in `AGENTS.md` and
+   `docs/SESSION-HANDOFF.md`, and every item in it waits on the GPU box or on you.
+
+**The one open thing with no hardware attached** is the `narrative` model role.
+`AGENTS.md` records that `storyteller` lands on `gpt-oss:20b` — the CTO's weights — and that
+giving the role its own family is a one-line catalog edit. Read the tier table before touching
+`config/models.json`: the declaration order is load-bearing and three assertions pin it.
 
 ## Relevant files
 
@@ -166,7 +218,7 @@ Also: `pkill -f "ollama serve"` matches its own command line and kills the shell
 
 ```bash
 cd /home/papa/Work/ai-org
-git log --oneline | wc -l          # 12
+git log --oneline | wc -l          # 15
 git remote -v                      # origin -> github.com/navinpal78/ai-org (private)
 git status -sb                     # ## main...origin/main, no divergence
 git status --porcelain | wc -l     # 0
@@ -174,6 +226,7 @@ git status --porcelain | wc -l     # 0
 #   1 problem(s). Fix these before trusting a test score...
 #   500 checks passed
 python3 tools/mutation-audit.py    # ~5 min: 68/69 owned, 1 proved dead
+bash tools/mutation-audit.sh       # seconds: 9/9 owned, and it self-tests first
 ```
 
 The one error is deliberate and is the 28-48GB auditor monoculture
@@ -182,3 +235,9 @@ If the error count is ever anything other than 1, stop and investigate — that 
 the project's own documented rule, and this session produced a phantom "2
 problem(s)" from a test fixture leaking to stderr, which is exactly how a future
 session could waste an hour chasing a regression that does not exist.
+
+**`bash tools/mutation-audit.sh` prints its self-test result on the first line.
+Read it.** It must say `self-test ok`, and it exits non-zero rather than print a
+coverage number if it cannot prove it can fail. A clean `9/9` from a run whose
+first line is missing is worth nothing — that is precisely how it reported 8/8
+while every mutation was dying.

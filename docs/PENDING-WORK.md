@@ -120,3 +120,37 @@ is in this session's history. Not a repo problem, but a real one.
 - **Coverage claims are only worth what their weakest link is.** "All 13 finding
   functions are tested" was false — 31 of 69 call sites had no assertion. Mute
   each call individually and count. Never match by function name or line number.
+- **A harness that cannot report failure will report success.** The
+  `check-models.sh` audit printed a clean 8/8 while every mutation had died on
+  an unbound variable, and its self-test had never run because the guard tested
+  a variable after defaulting it. Make the instrument prove it can fail before
+  believing any number it prints. This is the `nvidia-smi` lesson again, one
+  level up: it is not enough for the thing under test to be correct.
+
+## Where the next session starts — 2026-09-29
+
+Three of the four Tier 1 owner decisions and the one Tier 3 hardening item are
+now closed. What remains is genuinely blocked, and none of it is code.
+
+**Do not re-derive the parked list.** It is in `AGENTS.md` and
+`docs/SESSION-HANDOFF.md`, and it is unchanged. In short: all real agent scores,
+every `AGENT_LAST_SCORE`, the `devstral:24b` / `gpt-oss:20b` thinking
+confirmation, and the `artist` / `director` build all wait on the GPU box.
+
+**The one open item with no hardware attached** is the `narrative` role.
+`AGENTS.md` records that `storyteller` resolves to `gpt-oss:20b` — the same
+weights as the CTO and seven other agents — and that giving the role its own
+model family is a one-line catalog edit. Nobody audits fiction, so it is not a
+safety gap, and it is **not** the auditor monoculture: the 16GB and 24GB bands
+are safe and `artist` / `director` are the two unbuilt agents. Treat it as a
+real decision with a real cost, not a formality, and read the tier table before
+editing `config/models.json` — the ordering rule is load-bearing and three
+assertions pin it.
+
+**Before any of it, the verification block at the bottom of
+`docs/SESSION-NOTES.md` is the fastest way to confirm the tree is where this
+note thinks it is.** 500 checks, 1 problem, 15 commits, clean tree, tracking
+`origin/main`.
+
+**Still yours, and unrelated to the code:** rotate the sudo password pasted into
+an earlier chat.
