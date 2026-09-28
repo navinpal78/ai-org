@@ -4,7 +4,8 @@
 `/tmp/opencode/session/notes.md`, originally kept at `~/Work/SESSION-NOTES.md` because `/tmp` may
 not survive a reboot. On 2026-09-28 it moved into the repo at `docs/SESSION-NOTES.md`, alongside
 `docs/CONTINUE-TOMORROW.md` and `docs/PENDING-WORK.md`, so the audit history is under version
-control. The copies in `~/Work` are superseded — this is the canonical one.**
+control. The copies in `~/Work` were deleted; this is the canonical one. That `/tmp` path no longer
+exists, so the two references to it below are historical, not somewhere to look.**
 
 ## Objective
 
@@ -117,7 +118,8 @@ Mute one finding at a time; the suite must go red. Name-matching and line covera
 - naming a function in the test file misses helpers reached through a caller
 - a line tracer misses every finding provoked in a subprocess, and a line that *executes* while
   nothing asserts its output is the same false pass as a line that never runs
-- **two attempts in this session were wrong** (see `/tmp/opencode/session/notes.md` history below)
+- **two attempts in this session were wrong** (both described in
+  `docs/SESSION-HANDOFF.md`; the original live-notes file is gone)
 - **a third, later: an unmeasured mutation counted as a pass.** See the second-session entry above.
   This is the trap that survives every other fix, because the output looks perfect.
 
