@@ -205,7 +205,7 @@ believed clean is what confirms the clean-up rather than a fresh catastrophe.
 reports **1 error and exits non-zero**, plus two warnings that are information
 rather than defects. The error is the known 28-48GB auditor monoculture and it is
 deliberate - see "What is still red" in `AGENTS.md`. Everything else is clean:
-16 agents, 607 cases, 472 assertions. **If the error count is ever anything other
+16 agents, 607 cases, 500 assertions. **If the error count is ever anything other
 than 1, that is a new problem.**
 
 The two warnings are expected:

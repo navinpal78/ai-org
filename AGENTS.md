@@ -480,6 +480,61 @@ reported numbers that looked like findings about the project while being bugs in
 the harness: a scratch-directory race that made the total move between identical
 runs, and a skipped mutation counted as a pass.
 
+The shell sibling is `tools/mutation-audit.sh` (faster; no python harness
+needed). It is a **separate script on purpose** - it finds sites by grepping,
+because a shell script has no AST, and rule 19 is the reason not to merge two
+implementations of one idea into something neither language can call. Current:
+**9/9 owned.**
+
+## The last instrument had no tests at all
+
+`tools/check-models.sh` is the instrument behind the "0 phantoms" claim - the one
+that caught `qwen3:72b` and `qwen3-coder-next:80b`. A mutation audit of it found
+**9 finding sites and 0 owned.** Silencing any one of them left the suite green.
+It had no tests whatsoever, and the reason was not exotic: it reaches for `curl`
+and a model server, and nobody had applied rule 18 to it. Both are stubbable.
+All nine findings are now owned, offline, with a fake `curl` on a hand-built
+`PATH`.
+
+**The hand-written site count in PENDING-WORK.md was 5. Measurement said 9.** The
+two it had right by luck included the phantom `[fail]` itself. Derive the list;
+do not read it off a file.
+
+**Writing the harness produced five bugs, and four of them made the audit report
+a clean tree while measuring nothing.** They are the most useful part of this
+entry, because each one is a way a coverage claim can be confidently false:
+
+- **`asserted = n - green - skips` counted a mutation that never ran as a
+  pass.** Every site died on an unbound variable - `local d=X f="$d/$rel"`
+  evaluates the second assignment before `d` has a value - and the script
+  printed a clean 8/8 with zero false passes. **A claim derived by subtracting
+  the failures from a constant cannot distinguish "the test caught it" from
+  "nothing happened."** The total is now derived from rows that actually
+  reported, and a site with no result is a hard `exit 2`.
+- **The site enumerator matched only lines *starting* with `bad`/`warn`/`die`.**
+  A call in `case` command position reads `404) bad "..."` and is not at the
+  start of the line, so the enumerator missed **the phantom `[fail]`** - the
+  single most important finding in the file - while *counting the `bad()` and
+  `warn()` function definitions* as findings. Muting one of those silences
+  every `bad` in the file at once, which is a much larger mutation than the one
+  being measured.
+- **The self-test was guarded on `[ ${#TARGETS[@]} -eq 0 ]`, tested after the
+  default target had been filled in.** Which is never true. The self-test had
+  never run, and reported nothing about it. A self-test that cannot run is the
+  same class of bug as one that cannot fail.
+- **Two of my own test stubs were wrong in ways that made assertions pass
+  against nothing**, and both are traps this file already documents for the real
+  tool. The manifest URL puts the tag in the **path**
+  (`/v2/library/qwen3/manifests/72b`), not after a colon, so a stub matching
+  `*qwen3:72b*` returns 200 for a phantom and the test passes a clean catalog.
+  And the `/api/show` call passes `-d <json>` **last**, so `${@: -1}` is the
+  payload, not the URL. Three times now the instrument was right and the thing
+  pretending to be the instrument was wrong.
+
+The self-test is the guard against all of it: `tools/mutation-audit.sh` runs
+against a target nothing tests and **must report 0/2**, or it refuses to print
+a number at all. If you ever see a clean number from it, check that line first.
+
 ## Every finding the checker makes is owned by a test
 
 `tools/check-agents.py` makes **69 finding call sites** (68 `rep.error`, 1 `rep.warn`

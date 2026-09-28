@@ -16,7 +16,7 @@ needs either an owner decision or a decision to start a new audit block (see Pen
 
 ## Important details
 
-- Expected baseline, and what "healthy" means: 16 agents, 607 cases, **472 assertions**, 2 info
+- Expected baseline, and what "healthy" means: 16 agents, 607 cases, **500 assertions**, 2 info
   warnings, 0 phantom model tags, 0 family warnings, **exactly 1 error** (deliberate).
 - `bootstrap.sh check` **exits 1** by design. That is the known auditor-monoculture error, not a
   regression. If the error count is ever anything other than 1, that is a new problem.
@@ -30,7 +30,7 @@ needs either an owner decision or a decision to start a new audit block (see Pen
   against small local models, do not treat a CPU or 0.6B score as a quality signal.
 - `ollama` is **not** running (was stopped deliberately at the end of the doc-correction pass).
 - A fresh clone with no GPU and no model server works: warns 16× to run `./bootstrap.sh detect`,
-  then after `detect` reaches 472 checks with 1 known error. Verified twice.
+  then after `detect` reaches 500 checks with 1 known error. Verified twice.
 
 ## Work completed this session
 
@@ -66,7 +66,7 @@ The 31 were not scattered:
   "no runtimes object".
 
 **Final: 69 sites, 68 owned by an assertion, 1 proved dead.** 415 → 460 checks from this
-audit alone; the live suite is now 472 after the round-trip test.
+audit alone; the live suite is now 500 after the check-models.sh audit.
 
 ### How to measure this (do not substitute a cheaper method)
 
@@ -122,9 +122,13 @@ so a future session does not have to rebuild it. **Not yet committed** — see N
 
 - `/home/papa/Work/ai-org/tools/check-agents.py` — the audited instrument. 29 functions, 13 emit
   findings, 69 call sites.
-- `/home/papa/Work/ai-org/tests/test_retrieval.py` — 472-assertion suite. New:
+- `/home/papa/Work/ai-org/tests/test_retrieval.py` — 500-assertion suite. New:
   `test_every_finding_is_asserted_somewhere`, `test_the_other_unowned_findings`,
-  `test_the_audit_log_writer_and_its_reader_agree`.
+  `test_the_audit_log_writer_and_its_reader_agree`,
+  `test_check_models_catches_its_own_failure_modes`.
+- `/home/papa/Work/ai-org/tools/mutation-audit.sh` — the shell mutation harness.
+  Self-testing: it must report 0/2 on a target nothing tests, or it refuses to
+  print a number at all.
 - `/home/papa/Work/ai-org/tools/mutation-audit.py` — the harness. Committed (`70c6375`).
 - `/home/papa/Work/ai-org/AGENTS.md` — project rules, live counts, per-function audit findings, and
   the new "Every finding the checker makes is owned by a test" section.
@@ -168,7 +172,7 @@ git status -sb                     # ## main...origin/main, no divergence
 git status --porcelain | wc -l     # 0
 ./bootstrap.sh check 2>&1 | grep -E "checks passed|problem\(s\)"
 #   1 problem(s). Fix these before trusting a test score...
-#   472 checks passed
+#   500 checks passed
 python3 tools/mutation-audit.py    # ~5 min: 68/69 owned, 1 proved dead
 ```
 

@@ -7,7 +7,7 @@ commits, clean tree, pushed to a private remote.
 ## What "healthy" looks like right now
 
 ```
-472 checks passed
+500 checks passed
 1 problem   <- deliberate, documented, known: the security-engineer/cto
                auditor monoculture at 25.0GB usable
 ```
@@ -77,17 +77,17 @@ If `think=high` leaks `<think>` into a reply, the score is garbage. This is why
 
 ## Tier 3 — optional hardening. Nothing is currently red because of these.
 
-**7. Mutation-audit `tools/check-models.sh`.**
-The one remaining instrument never audited. Only 5 finding sites (lines 102, 113,
-115, 139, 140) against 69 in `check-agents.py`, and 3 need a live Ollama or a
-real 404 to reach. It is the instrument behind the "0 phantoms" claim and the one
-that caught `qwen3:72b` and `qwen3-coder-next:80b` — nothing proves it would
-catch a third. Method is reusable:
-```
-python3 tools/mutation-audit.py     # repoint SRC + rep.<kind> matching
-```
-Worth it only if you want the phantom-detection claim hardened. A tenth the size
-of what is already audited.
+**7. ~~Mutation-audit `tools/check-models.sh`.~~ — DONE, 2026-09-28.**
+It was the last unaudited instrument, and it was worse than "optional
+hardening": **9 finding sites, 0 owned.** Silencing any one of them left
+the suite green, so the "0 phantoms" claim had no test behind it at all.
+The hand-written count in this file used to say 5 — measurement says 9,
+and the two it had right by luck included the phantom `[fail]` itself.
+
+All nine are now owned (472 → 500 checks, `bash tools/mutation-audit.sh`
+reports 9/9), using stub `curl`/`ollama` on a hand-built `PATH`. Nothing
+needs a network or a GPU. See "The last instrument had no tests at all"
+in `AGENTS.md`.
 
 **8. ~~Put the handoff files under Git.~~ — DONE, 2026-09-28.**
 `docs/SESSION-HANDOFF.md` was already tracked. `docs/SESSION-NOTES.md`,
@@ -110,7 +110,7 @@ is in this session's history. Not a repo problem, but a real one.
 - **Do not "fix" the 1 error** without answering item 2 first. It is load-bearing
   documentation of a real tension, not an oversight.
 - **Do not trust stale counts in older sections of the handoff.** 415 and 460 are
-  both historical; the live suite is 472.
+  both historical; the live suite is 500.
 
 ## Two rules learned the hard way
 
