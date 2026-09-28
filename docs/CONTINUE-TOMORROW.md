@@ -75,10 +75,10 @@ is 39 tags, zero phantoms, verified with `./tools/check-models.sh --online`.
 `qwen3-coder-next:latest`; `qwen3:72b` never existed and the entry is deleted, so
 the 48-64GB band falls back to `qwen3:32b`. Nothing at or below 48GB moved.
 
-**Closed:** `git init` - the tree is under version control as of 2026-09-27, 4
-commits, 141 tracked files, clean working tree. It had been offered five times
-before it was approved, and the first commit is the state right after the
-coverage audit, so `git log` is a readable history of the day.
+**Closed:** `git init` and then the remote. The tree is under version control as
+of 2026-09-27 and pushed to a private GitHub repo on 2026-09-28, so it is no
+longer only as durable as this disk. The first commit is the state right after
+the coverage audit, so `git log` is a readable history of the day.
 
 **What changed most recently, and what it means for tomorrow:**
 
@@ -156,19 +156,12 @@ believed clean is what confirms the clean-up rather than a fresh catastrophe.
 
 ## Four things to be aware of
 
-- **The project is under version control as of 2026-09-27.** Four commits on
-  `main`, 141 tracked files, nothing uncommitted, no remote. The old
-  `~/Work/snapshots/ai-org-2026-09-25.tar.gz` still contains only **five**
-  agents and is now superseded - it is not a backup any more, it is a museum
-  piece, and nothing since it depends on it.
-
-  **There is no remote**, so the repository is only as durable as this disk.
-  That is the remaining half of the problem the git init solved, and it is
-  yours to close:
-
-  ```bash
-  cd /home/papa/Work/ai-org && git remote add origin <url> && git push -u origin main
-  ```
+- **The project is under version control, and now has a remote.** 12 commits on
+  `main`, 145 tracked files, nothing uncommitted, pushed to a **private**
+  `github.com/navinpal78/ai-org` on 2026-09-28. Before that it was 4 commits and
+  one disk; the old `~/Work/snapshots/ai-org-2026-09-25.tar.gz` still contains
+   only **five** agents and is now superseded - it is not a backup any more, it
+   is a museum piece, and nothing since it depends on it.
 
   Two things deliberately NOT committed, and the reasoning is in `.gitignore`:
   `config/models.env` and `config/profile.env` are rewritten by every

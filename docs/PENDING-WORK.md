@@ -2,7 +2,7 @@
 
 Written at the end of the audit session, updated 2026-09-28. Everything below is
 saved and committed; nothing here is half-done. Repo is at `~/Work/ai-org`, 12
-commits, clean tree, no remote.
+commits, clean tree, pushed to a private remote.
 
 ## What "healthy" looks like right now
 
@@ -55,8 +55,9 @@ emit `<think>` text, which would corrupt exact-match scoring. Confirming costs
 ~30GB of pulls. `qwen3-coder-next:latest` is a floating tag with thinking
 unrecorded, so a pull could change its behaviour under you.
 
-**4. Git remote.**
-12 commits, all local, one disk. No push has ever happened. **Open.**
+**4. ~~Git remote.~~ — DONE, 2026-09-28.**
+12 commits pushed to a private `github.com/navinpal78/ai-org`. `main` tracks
+`origin/main`. The repo is no longer only as durable as this disk.
 
 ---
 

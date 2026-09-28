@@ -20,7 +20,9 @@ needs either an owner decision or a decision to start a new audit block (see Pen
   warnings, 0 phantom model tags, 0 family warnings, **exactly 1 error** (deliberate).
 - `bootstrap.sh check` **exits 1** by design. That is the known auditor-monoculture error, not a
   regression. If the error count is ever anything other than 1, that is a new problem.
-- Git: local branch `main`, 8 commits, 141 tracked files, no remote, no uncommitted changes.
+- Git: local branch `main`, 12 commits, 145 tracked files, private remote
+  `origin` (`github.com/navinpal78/ai-org`, added 2026-09-28), no uncommitted
+  changes.
 - Generated machine state is intentionally **untracked** (`.gitignore`): `config/models.env`,
   `config/profile.env`, `state/detect-history.log`, `state/previous-tier`. `config/hardware.json`
   is tracked and contains this box's local hardware, which is a known, accepted quirk.
@@ -90,8 +92,8 @@ so a future session does not have to rebuild it. **Not yet committed** — see N
   | `artist`/`director` — ComfyUI adapter, or author image specs a human runs? | 2 of 18 agents unbuilt |
   | 28–48GB auditor band — different auditor for the 24GB target, or stay red? | stays deliberately red |
   | pull `devstral:24b` + `gpt-oss:20b` (~30GB) to confirm thinking capability? | `coder` may silently lose thinking on the design-target card |
-  | add a `git remote`? | repo is only as durable as this disk |
-  | move `CONTINUE-TOMORROW.md` into the repo? | the one piece of state git does not cover |
+  | ~~add a `git remote`?~~ | **done 2026-09-28** - private `navinpal78/ai-org` |
+  | ~~move `CONTINUE-TOMORROW.md` into the repo?~~ | **done 2026-09-28** - `docs/`, along with the other two |
   | rotate the sudo password pasted into an earlier chat | unrelated to the code |
 - **GPU-blocked:** all real agent scores, every `AGENT_LAST_SCORE`, and which uncensored model is
   actually right (`orca2:13b` is picked by size; `dolphin3:8b` is the better prior). Unblocked by
@@ -160,8 +162,9 @@ Also: `pkill -f "ollama serve"` matches its own command line and kills the shell
 
 ```bash
 cd /home/papa/Work/ai-org
-git log --oneline | wc -l          # 11
-git remote -v                      # empty until a remote is added
+git log --oneline | wc -l          # 12
+git remote -v                      # origin -> github.com/navinpal78/ai-org (private)
+git status -sb                     # ## main...origin/main, no divergence
 git status --porcelain | wc -l     # 0
 ./bootstrap.sh check 2>&1 | grep -E "checks passed|problem\(s\)"
 #   1 problem(s). Fix these before trusting a test score...
