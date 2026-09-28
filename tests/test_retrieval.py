@@ -3184,6 +3184,295 @@ def test_the_other_unowned_findings(tmp: Path) -> None:
             setattr(mod, k, v)
 
 
+# ---------------------------------------------------------------------------
+# check-models.sh - the last unaudited instrument
+# ---------------------------------------------------------------------------
+
+def _fake_bin(bindir: Path, name: str, body: str) -> None:
+    """Write an executable stub. Rule 18: a fake binary is how these scripts
+    get tested at all on a machine with no GPU, and it is how the four bugs in
+    the research pipeline were found."""
+    p = bindir / name
+    p.write_text("#!/usr/bin/env bash\n" + body + "\n")
+    p.chmod(0o755)
+
+
+def test_check_models_catches_its_own_failure_modes(tmp: Path) -> None:
+    """Every finding `tools/check-models.sh` makes is owned by an assertion.
+
+    This is the instrument behind the "0 phantoms" claim - the one that caught
+    `qwen3:72b` and `qwen3-coder-next:80b`. It is opt-in and needs the network
+    or a live Ollama, which is exactly why it had **no tests at all**: a
+    mutation audit of it found 9 finding sites and 0 owned. Silencing any one
+    of them left the suite green.
+
+    The hand-written count in PENDING-WORK.md was 5 sites. Measurement says 9.
+    The two the hand count had right by luck included the phantom `[fail]`
+    itself; what it missed were the `case`-arm warnings, the argument-rejection
+    `die`, the `lib/common.sh` `die`, the "not pulled" line and the closing
+    verdict block. A count written down by reading is a claim; this one is
+    derived by the harness and can be re-derived.
+
+    **All nine are reachable offline.** Two thirds of the reason this file was
+    untested is that it reaches for `curl` and a model server, and both are
+    stubbable - the same technique rule 18 mandates and that found the four
+    crawler bugs. Nothing here needs a network or a GPU.
+    """
+    root = Path(tmp) / "cmroot"
+    for sub in ("lib", "config", "tools"):
+        (root / sub).mkdir(parents=True)
+    for rel in ("tools/check-models.sh", "lib/common.sh"):
+        (root / rel).write_text((ROOT / rel).read_text())
+
+    bindir = root / "bin"
+    bindir.mkdir()
+    for tool in ("bash", "sh", "python3", "jq", "awk", "sed", "cat", "grep",
+                 "tr", "wc", "cut", "sort", "head", "tail", "dirname", "basename",
+                 "printf", "env", "find", "mktemp", "rm", "cp", "mkdir"):
+        real = shutil.which(tool)
+        if real:
+            (bindir / tool).symlink_to(real)
+
+    # --- the catalog under test ---------------------------------------------
+    # One good tag, one phantom, one malformed (no ':tag'), one that will be
+    # reported as not-pulled. Deliberately tiny: the point is which findings
+    # fire, not how many tags the real catalog has.
+    catalog = root / "config" / "models.json"
+    catalog.write_text(json.dumps({"roles": {
+        "good":    {"candidates": [{"model": "qwen3:8b", "vram_gb": 8}]},
+        "phantom": {"candidates": [{"model": "qwen3:72b", "vram_gb": 44}]},
+        "malformed": {"candidates": [{"model": "bare-model-no-tag", "vram_gb": 4}]},
+    }}), encoding="utf-8")
+
+    # --- fake curl ------------------------------------------------------------
+    # One stub answering all three questions the script asks. **Do not read the
+    # URL from the last argument.** The `/api/show` call passes `-d <json>` last,
+    # so `${@: -1}` is the payload, not the URL - the first version of this stub
+    # did exactly that, every call fell through to the `*)` arm, and the
+    # thinking assertions passed against a body of `200`. Read the argument that
+    # looks like a URL instead, which is right for all three call shapes.
+    #
+    # **Match the manifest URL the way the script builds it, or the stub lies.**
+    # The repo and tag are split apart and the tag goes in the PATH
+    # (`/v2/library/qwen3/manifests/72b`), not after a colon. The first version
+    # matched on `*qwen3:72b*`, which never appears in the URL - so every tag
+    # came back 200 and the phantom test passed a clean catalog while asserting
+    # nothing. That is the identical mistake AGENTS.md records for the real tool
+    # ("a 404 on a tag you are sure exists usually means you built the URL
+    # wrong"), reached from the other direction: here the tool was right and the
+    # instrument pretending to be the registry was wrong.
+    _fake_bin(bindir, "curl", r'''
+url=""
+for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
+case "$url" in
+  */api/tags) exit 0 ;;
+  */api/show)
+    case "$*" in
+      *qwen3:8b*) printf '{"capabilities":["completion","thinking"]}' ;;
+      *)          printf '{"capabilities":["completion"]}' ;;
+    esac
+    exit 0 ;;
+  */manifests/72b)      printf '404'; exit 0 ;;
+  */manifests/no-tag)   printf '404'; exit 0 ;;
+  *) printf '200'; exit 0 ;;
+esac
+''')
+    # ollama is only consulted under --all; absent is the honest default and
+    # the script tolerates it.
+    _fake_bin(bindir, "ollama", 'exit 1')
+
+    def run(*args: str, env_extra: dict | None = None) -> tuple[int, str, str]:
+        env = {"PATH": str(bindir), "HOME": str(root)}
+        if env_extra:
+            env.update(env_extra)
+        p = subprocess.run(
+            [str(bindir / "bash"), str(root / "tools" / "check-models.sh"), *args],
+            capture_output=True, text=True, cwd=root, timeout=120, env=env)
+        return p.returncode, p.stdout, p.stderr
+
+    # --- 1. the phantom, with --online ---------------------------------------
+    rc, out, _ = run("--online")
+    check("check-models: a tag the registry 404s is called a phantom",
+          "[fail]" in out and "qwen3:72b" in out and "phantom" in out,
+          f"exit={rc} stdout={out[-400:]!r}")
+    check("check-models: and the phantom count is in the closing verdict",
+          "1 phantom tag(s)" in out, f"stdout={out[-400:]!r}")
+    check("check-models: a phantom is exit 1 - a missing model scores nothing",
+          rc == 1, f"exit={rc}, expected 1")
+    check("check-models: the good tag in the same run is NOT called a phantom",
+          "qwen3:8b" in out and "qwen3:8b  (role good)" in out,
+          f"stdout={out[-400:]!r}")
+    # One phantom, two `[fail]` lines: the finding itself and the closing
+    # verdict. Asserted as a count of the *finding*, because that is the part
+    # that could double-count - `phantom=$((phantom + 1))` sits on the `404`
+    # arm only, so a malformed reference that also 404s must not increment it.
+    eq("check-models: exactly one tag is called a phantom, and it is the 404 one",
+       out.count("[fail] qwen3:72b"), 1)
+    check("check-models: the malformed reference is warned about, never counted "
+          "as a phantom - it has no tag to look up",
+          "bare-model-no-tag" in out
+          and "[fail] bare-model-no-tag" not in out
+          and "1 phantom tag(s)" in out,
+          f"stdout={out[-400:]!r}")
+
+    # --- 2. a model reference with no ':tag' ---------------------------------
+    # Asserted above, from the same run: it is questioned by name, and it is
+    # never counted as a phantom because there is no tag to look up.
+    check("check-models: a reference with no ':tag' is questioned by name",
+          "bare-model-no-tag" in out and "really a model reference" in out,
+          f"stdout={out[-400:]!r}")
+
+    # --- 3. an unexpected HTTP status ---------------------------------------
+    # A registry that answers 500 is a different fact from one that answers 404,
+    # and conflating them is how a network outage gets reported as a broken
+    # catalog. The two sites are separate for that reason and both are owned.
+    _fake_bin(bindir, "curl", r'''
+url=""
+for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
+case "$url" in
+  */api/tags) exit 0 ;;
+  */api/show)
+    case "$*" in
+      *qwen3:8b*) printf '{"capabilities":["completion","thinking"]}' ;;
+      *)          printf '{"capabilities":["completion"]}' ;;
+    esac
+    exit 0 ;;
+  *) printf '503'; exit 0 ;;
+esac
+''')
+    rc503, out503, _ = run("--online")
+    check("check-models: a non-404 HTTP error is reported with its status",
+          "registry returned HTTP 503" in out503, f"stdout={out503[-400:]!r}")
+    check("check-models: and it is NOT counted as a phantom - 503 is not 404",
+          rc503 == 0 and "phantom tag(s)" not in out503,
+          f"exit={rc503} stdout={out503[-400:]!r}")
+
+    # --- 4. no model server --------------------------------------------------
+    # The common case on a machine that has not started Ollama. It must say so
+    # plainly and must not invent a capability verdict for anything.
+    _fake_bin(bindir, "curl", r'''
+url=""
+for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
+case "$url" in
+  */api/tags) exit 7 ;;
+  *) printf '200'; exit 0 ;;
+esac
+''')
+    rc_ns, out_ns, _ = run()
+    check("check-models: with no model server it says capability is unconfirmed",
+          "no model server" in out_ns and "unconfirmed for every model" in out_ns,
+          f"stdout={out_ns[-400:]!r}")
+    check("check-models: and it tells the operator how to fix that",
+          "Start Ollama" in out_ns, f"stdout={out_ns[-400:]!r}")
+    check("check-models: no server is not an error - the safe default already "
+          "assumes cannot-think",
+          rc_ns == 0, f"exit={rc_ns}, expected 0")
+
+    # --- 5. thinking capability, from the server's own answer ----------------
+    _fake_bin(bindir, "curl", r'''
+url=""
+for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
+case "$url" in
+  */api/tags) exit 0 ;;
+  */api/show)
+    case "$*" in
+      *qwen3:8b*) printf '{"capabilities":["completion","thinking"]}' ;;
+      *)          printf '{"capabilities":["completion"]}' ;;
+    esac
+    exit 0 ;;
+  *) printf '200'; exit 0 ;;
+esac
+''')
+    rc_t, out_t, _ = run()
+    check("check-models: a model the server says thinks is reported as thinking",
+          "qwen3:8b" in out_t and "thinks" in out_t, f"stdout={out_t[-400:]!r}")
+    check("check-models: one that does not is reported as not thinking",
+          "does NOT think" in out_t, f"stdout={out_t[-400:]!r}")
+    check("check-models: absent capabilities are counted unconfirmed, not guessed",
+          "confirmed: 3    unconfirmed (not pulled): 0" in out_t,
+          f"stdout={out_t[-400:]!r}")
+
+    # --- 6. a model that is not on disk -------------------------------------
+    # `/api/show` answering with no capabilities is the real shape of "not
+    # pulled". Reporting it as a capability would be inventing a fact, and it
+    # is the reason the catalog's unrecorded `thinks` values are safe to leave.
+    _fake_bin(bindir, "curl", r'''
+url=""
+for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
+case "$url" in
+  */api/tags) exit 0 ;;
+  */api/show) printf '{}'; exit 0 ;;
+  *) printf '200'; exit 0 ;;
+esac
+''')
+    _, out_np, _ = run()
+    check("check-models: a model the server has no capabilities for is "
+          "'not pulled', not 'does not think'",
+          "not pulled - cannot confirm" in out_np, f"stdout={out_np[-400:]!r}")
+    check("check-models: and those are counted separately",
+          "unconfirmed (not pulled): 3" in out_np, f"stdout={out_np[-400:]!r}")
+
+    # --- 7. the two die() sites ----------------------------------------------
+    # An unknown option, and a tree with no lib/common.sh. Both are "you called
+    # me wrong", and both must be loud: the first is a typo in a command a
+    # beginner types, the second is running from the wrong directory.
+    catalog.write_text(catalog.read_text(), encoding="utf-8")
+    rc_bad, _, err_bad = run("--nonsense")
+    check("check-models: an unknown option is rejected by name",
+          "unknown option" in err_bad and "--nonsense" in err_bad,
+          f"stderr={err_bad[-200:]!r}")
+    eq("check-models: and rejected with exit 1", rc_bad, 1)
+
+    saved_common = (root / "lib" / "common.sh").read_text()
+    try:
+        (root / "lib" / "common.sh").write_text("this is not valid bash (\n")
+        rc_lib, _, err_lib = run()
+        check("check-models: an unloadable lib/common.sh is fatal and says so",
+              "cannot load lib/common.sh" in err_lib, f"stderr={err_lib[-200:]!r}")
+        eq("check-models: and it is exit 1 - it cannot check anything", rc_lib, 1)
+    finally:
+        (root / "lib" / "common.sh").write_text(saved_common, encoding="utf-8")
+
+    # --- 8. --help and the offline reminder ----------------------------------
+    rc_h, out_h, _ = run("--help")
+    check("check-models: --help explains itself", "USAGE" in out_h,
+          f"stdout={out_h[:200]!r}")
+    eq("check-models: --help is not an error", rc_h, 0)
+
+    rc_off, out_off, _ = run()
+    check("check-models: without --online it says tag existence was not checked",
+          "Tag existence was not checked" in out_off, f"stdout={out_off[-300:]!r}")
+    check("check-models: unconfirmed thinking is called a gap, not a defect",
+          "gap in what we know, not a defect" in out_off,
+          f"stdout={out_off[-300:]!r}")
+
+    # --- and the catalog the project actually ships --------------------------
+    # The fixture above proves the findings fire. This proves the real catalog
+    # is clean, which is the claim the instrument exists to support. Run with
+    # the stub registry answering 200 for everything except the two tags that
+    # are phantoms, so the assertion is about the shipped catalog's shape and
+    # not about the network.
+    _fake_bin(bindir, "curl", r'''
+url=""
+for a in "$@"; do case "$a" in http*) url="$a" ;; esac; done
+case "$url" in
+  */api/tags) exit 7 ;;
+  *) printf '200'; exit 0 ;;
+esac
+''')
+    real_catalog = (ROOT / "config" / "models.json").read_text()
+    (root / "config" / "models.json").write_text(real_catalog, encoding="utf-8")
+    rc_real, out_real, _ = run("--online")
+    check("check-models: the real catalog reports zero phantoms against a "
+          "registry that 200s everything",
+          "0 phantom" not in out_real and "[fail]" not in out_real,
+          f"exit={rc_real} stdout={out_real[-400:]!r}")
+    eq("check-models: so it exits 0 on the catalog as it stands", rc_real, 0)
+    check("check-models: and the real catalog is big enough for the claim to "
+          "mean something (39 tags, per AGENTS.md)",
+          out_real.count("(role ") >= 39,
+          f"only {out_real.count('(role ')} tags checked")
+
 
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="aiorg-retrieval-"))
@@ -3231,6 +3520,7 @@ def main() -> int:
             ("the checker reaches a verdict", lambda tmp: test_check_agents_reaches_a_verdict(tmp)),
             ("every finding is asserted", lambda tmp: test_every_finding_is_asserted_somewhere(tmp)),
             ("the other unowned findings", lambda tmp: test_the_other_unowned_findings(tmp)),
+            ("check-models failure modes", lambda tmp: test_check_models_catches_its_own_failure_modes(tmp)),
         ]
         for name, fn in groups:
             print(f"[{name}]")
