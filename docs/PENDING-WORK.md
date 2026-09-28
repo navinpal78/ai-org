@@ -1,8 +1,8 @@
 # Pending work — pick anything, or none
 
-Written at the end of the audit session, updated 2026-09-28. Everything below is
-saved and committed; nothing here is half-done. Repo is at `~/Work/ai-org`, 12
-commits, clean tree, pushed to a private remote.
+Written at the end of the audit session, updated 2026-09-29. Everything below is
+saved, committed and pushed; nothing here is half-done. Repo is at
+`~/Work/ai-org`, clean tree, private remote.
 
 ## What "healthy" looks like right now
 
@@ -56,7 +56,7 @@ emit `<think>` text, which would corrupt exact-match scoring. Confirming costs
 unrecorded, so a pull could change its behaviour under you.
 
 **4. ~~Git remote.~~ — DONE, 2026-09-28.**
-12 commits pushed to a private `github.com/navinpal78/ai-org`. `main` tracks
+Pushed to a private `github.com/navinpal78/ai-org`. `main` tracks
 `origin/main`. The repo is no longer only as durable as this disk.
 
 ---
@@ -149,7 +149,7 @@ assertions pin it.
 
 **Before any of it, the verification block at the bottom of
 `docs/SESSION-NOTES.md` is the fastest way to confirm the tree is where this
-note thinks it is.** 500 checks, 1 problem, 15 commits, clean tree, tracking
+note thinks it is.** 500 checks, 1 problem, clean tree, tracking
 `origin/main`.
 
 **Still yours, and unrelated to the code:** rotate the sudo password pasted into

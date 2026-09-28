@@ -20,7 +20,7 @@ needs either an owner decision or a decision to start a new audit block (see Pen
   warnings, 0 phantom model tags, 0 family warnings, **exactly 1 error** (deliberate).
 - `bootstrap.sh check` **exits 1** by design. That is the known auditor-monoculture error, not a
   regression. If the error count is ever anything other than 1, that is a new problem.
-- Git: local branch `main`, 12 commits, 145 tracked files, private remote
+- Git: local branch `main`, 146 tracked files, private remote
   `origin` (`github.com/navinpal78/ai-org`, added 2026-09-28), no uncommitted
   changes.
 - Generated machine state is intentionally **untracked** (`.gitignore`): `config/models.env`,
@@ -218,7 +218,10 @@ Also: `pkill -f "ollama serve"` matches its own command line and kills the shell
 
 ```bash
 cd /home/papa/Work/ai-org
-git log --oneline | wc -l          # 16
+git log --oneline | wc -l          # no expected value on purpose: the
+                                    # number changes with the commit that
+                                    # states it. Just confirm main tracks
+                                    # origin/main and the tree is clean.
 git remote -v                      # origin -> github.com/navinpal78/ai-org (private)
 git status -sb                     # ## main...origin/main, no divergence
 git status --porcelain | wc -l     # 0

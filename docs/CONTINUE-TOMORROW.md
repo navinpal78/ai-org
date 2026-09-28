@@ -1,7 +1,7 @@
 # Continue tomorrow
 
 _Last updated 2026-09-29. **Nothing is in progress and nothing is uncommitted.**
-16 commits, clean tree, pushed to a private `github.com/navinpal78/ai-org`.
+Clean tree, pushed to a private `github.com/navinpal78/ai-org`.
 500 checks, 1 deliberate error._
 
 _What changed since the last version of this file, and the one thing worth
@@ -180,8 +180,8 @@ believed clean is what confirms the clean-up rather than a fresh catastrophe.
 
 ## Four things to be aware of
 
-- **The project is under version control, and now has a remote.** 12 commits on
-  `main`, 145 tracked files, nothing uncommitted, pushed to a **private**
+- **The project is under version control, and now has a remote.** 146 tracked
+  files, nothing uncommitted, pushed to a **private**
   `github.com/navinpal78/ai-org` on 2026-09-28. Before that it was 4 commits and
   one disk; the old `~/Work/snapshots/ai-org-2026-09-25.tar.gz` still contains
    only **five** agents and is now superseded - it is not a backup any more, it
