@@ -792,6 +792,64 @@ instead of merely asserted.
     cost be silent. `devstral:24b` - the 24GB design-target model for `coder` -
     is one of them, and is the reason that warning is worth reading.
 
+23. **A flag with no value must not exit 1 in silence.** Every option-with-a-value
+    was parsed `--flag) V="${2:-}"; shift 2`, which is correct until the flag is
+    the last word on the command line. Then one argument is left, `shift 2`
+    fails, and under `set -e` - which all five of these scripts use - the script
+    dies **at the shift**, printing nothing at all. Exit 1 is the same code a
+    missing model, an unknown agent and a failed check all return, so a typo in
+    a flag is indistinguishable from the model server being down. For a
+    beginner, which this project is written for, that is a bad afternoon.
+
+    Found 2026-09-29 by typing `--only` and getting nothing back. **It was at 14
+    call sites in 4 tools**, not one: `audit-log.sh` (2), `test-agent.sh` (2),
+    `run-agent.sh` (1), `new-agent.sh` (7). `bootstrap.sh:35` already carried a
+    hand-patched `shift 2 || true`, which is the tell that one site had been
+    fixed by hand and the pattern never addressed. Rule 19's lesson at the size
+    of two characters: a rule on a single call site is not a rule.
+
+    Fixed with `aiorg_need_value` in `lib/common.sh`, which **exits 2, not 1**,
+    so the cause stays separable from every other failure, and names the flag
+    and the usage. Note `${2:-}` was separately wrong even where the shift did
+    not fire: a missing value yielded `""` rather than an error, so `--only` and
+    `--only ""` looked identical to the loop.
+
+    **Writing the test took three attempts, and all three failures were me
+    guessing at an interface instead of running it** - the same error the
+    missing-vocabulary case made, one layer up. My first data table paired a
+    *source pattern* with an *expected message* and asserted on text that was
+    never in the file. Then `new-agent.sh --retrieval`, which is not a bug in it:
+    it takes NAME as `$1` and validates it *before* the option loop, so the flag
+    was read as a malformed agent name. Third, `run-agent.sh` is options-only
+    until a bare `--`, so a bare positional is "unknown argument" and never
+    reaches the guard. The test now runs the real scripts, counts guard sites
+    per file so a fifth tool copying the idiom fails the suite, asserts the
+    guard fires *before* `new-agent.sh` reaches `mkdir` (a typo must not leave a
+    half-built agent behind), confirms a well-formed call is still accepted -
+    "dies on a missing value" and "ignores every value" would otherwise be the
+    same test - and **mutates the helper's body away to prove the assertions go
+    red**. 500 -> 516 checks.
+
+    **And the same day, the first agent run on this box broke rule 22 from the
+    other side.** Overriding the model for a CPU baseline with one line -
+
+        sed -i 's|_MODEL=.*|_MODEL="qwen3:0.6b"|' config/models.env
+
+    - changed every `*_MODEL` and left every `*_THINKS` describing the *original*
+    catalog model. The tree then looked self-consistent and was internally
+    wrong: `CODING_THINKS="false"` forced thinking off (~25s/case) while
+    `ADVERSARIAL_REVIEW_THINKS="true"` let it run (~190s/case), making
+    `security-engineer` **8x slower than `helpdesk` on the same model** and the
+    scores incomparable to each other. A 20-hour run was projected instead of 3.
+
+    **The capability flag is a property of the resolved model, which is exactly
+    why the resolver publishes it next to the model tag** - and why a *partial*
+    override is the one mistake no check in this tree can catch, because after
+    the edit the file looks perfectly valid. **If you override a model, override
+    its `*_THINKS` too, or leave both alone.** Never `sed` `models.env` at all
+    if you can avoid it; it is generated (rule 2), and a CPU baseline is
+    precisely the case for a scratch tree, which is what the handoff describes.
+
 ## A checker that crashes is not a checker that failed
 
 Found 2026-09-27, on the first run of the day. `check_independent_models` still

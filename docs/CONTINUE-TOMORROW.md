@@ -288,3 +288,74 @@ the recommended hardware.
   writer with 0 finding call sites. That left `tools/check-models.sh` as the only
   remaining instrument worth auditing, and it turned out not to be optional at
   all. **No instrument in the tree is now unaudited.**
+
+---
+
+## Added 2026-09-29: a CPU baseline run, and the `*_THINKS` trap
+
+The first agent runs on this box, against `qwen3:0.6b`, on a **copy** at
+`/tmp/aiorg-cpu`. Raw output and a full write-up are in
+`~/Work/cpu-baseline-2026-09-29/` — deliberately outside the repo, so no tool
+can mistake a 0.6B number for an `AGENT_LAST_SCORE`.
+
+| Agent | Cases | Score | think sent |
+|---|---|---|---|
+| helpdesk | 21 | 47% | off |
+| coder | 19 | 42% | off (downgraded) |
+| personal | 18 | 66% | off |
+| languages | 47 | 70% | off |
+| research-officer | 46 | 32% | off |
+| teacher | 32 | **no result** | — |
+
+**These are not agent-quality scores and must never be quoted as such.** 0.6B
+is far below the 8B+ weights this project targets, the research agents were run
+closed-book (rule 17), and the five completed agents were not even measured
+under a consistent configuration with each other. The run was stopped after
+5 of 16 agents, 2 hours in.
+
+**`teacher` and `storyteller` cannot run here at all** — the `teacher` and
+`narrative` roles bottom out at `qwen3:14b` (10GB) and the CPU fallback is a
+nominal 8GB, so `resolve_models.py` emits `# TEACHER_MODEL=""`. Correct
+behaviour; 14 of 16 are runnable.
+
+### The finding worth keeping: `*_THINKS` is a property of the *resolved model*
+
+Overriding the model with one `sed` line —
+
+    sed -i 's|_MODEL=.*|_MODEL="qwen3:0.6b"|' config/models.env
+
+— changed every `*_MODEL` and left every `*_THINKS` describing the *original*
+catalog model. The tree then looked fine and was internally wrong:
+
+    CODING_THINKS="false"             -> thinking forced off  ->  ~25s/case
+    ADVERSARIAL_REVIEW_THINKS="true"  -> thinking actually on  -> ~190s/case
+
+`security-engineer` ran at **3.2 min/case against `helpdesk`'s 16s** — 8x
+slower on the same 0.6B — purely because the flag said it could think, and
+`qwen3:0.6b` is a qwen3 model, so it did. On that trajectory the full run was
+20 hours, not 3, and the scores would not have been comparable to each other.
+
+**This is rule 22 working exactly as designed.** The resolver publishes
+`*_THINKS` beside the model tags precisely because the two must move together,
+and `aiorg_effective_think` is the only thing that reads them. A *partial*
+override is the one mistake that check cannot catch, because the tree is
+self-consistent on its face. **If you override a model, override its
+`*_THINKS` too, or leave both alone.**
+
+### To resume
+
+    cp -a ~/Work/ai-org /tmp/aiorg-cpu && rm -rf /tmp/aiorg-cpu/.git
+    cd /tmp/aiorg-cpu
+    sed -i 's|_MODEL=.*|_MODEL="qwen3:0.6b"|; s|_THINKS=.*|_THINKS="false"|' config/models.env
+    nohup ollama serve &
+    bash ~/Work/cpu-baseline-2026-09-29/aiorg-cpu-run-all.sh
+
+~25s/case, so ~3h for the full 643, comparable across all 14 runnable agents.
+Results land in `/tmp/aiorg-cpu-runs/` — copy them out of `/tmp` when done.
+
+### The argument-guard fix, for reference
+
+`--only` (and 13 sibling sites) died silently on a missing value. Fixed as
+`aiorg_need_value` in `lib/common.sh`, exits 2. 500 → 516 checks. Detail and
+the three ways my own test guessed at an interface instead of running it are in
+commit `a2fd763` and `AGENTS.md` rule 23.
