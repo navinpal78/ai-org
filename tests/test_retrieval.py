@@ -3474,6 +3474,136 @@ esac
           f"only {out_real.count('(role ')} tags checked")
 
 
+# ---------------------------------------------------------------------------
+# an option with no value used to exit 1 in silence
+# ---------------------------------------------------------------------------
+
+# Every option-with-a-value in the tree was parsed `--flag) V="${2:-}"; shift 2`,
+# which is right until the flag is the last word on the line: one argument is
+# left, `shift 2` fails, and under `set -e` the script dies AT THE SHIFT. No
+# message, no usage, exit 1 - the same code as a missing model, a bad agent name
+# and a failed check. Found by typing `--only` with nothing after it.
+#
+# 14 sites across 4 scripts. bootstrap.sh:35 already carried `shift 2 || true`
+# for it, which is the tell that one site got patched by hand and the pattern
+# did not. So the assertion below is over the PATTERN, not over the four files:
+# a fifth tool copying the idiom should fail the suite, not ship the bug.
+#
+# (script, guard-call sites, argv prefix, the flag to invoke last).
+#
+# `new-agent.sh` is positional: it takes NAME as $1 and validates it *before* the
+# option loop, so `new-agent.sh --retrieval` is read as a malformed AGENT NAME
+# and never reaches the guard. That is a pre-existing ordering quirk, not
+# something this fix should change, so the invocation supplies a valid name.
+# `run-agent.sh` is the opposite - it is options-only until a bare `--`, and
+# passes everything after it to the agent as the prompt, so a bare positional
+# is "unknown argument" and the guard is never reached. Verified separately
+# below that the guard fires before `mkdir`, so a typo cannot leave a
+# half-built agent directory behind.
+FLAGS_NEEDING_A_VALUE = [
+    ("tools/audit-log.sh", 2, [], "--tail"),
+    ("tools/test-agent.sh", 2, ["coder"], "--only"),
+    ("tools/run-agent.sh", 1, [], "--db"),
+    ("tools/new-agent.sh",  7, ["arg-guard-scratch"], "--retrieval"),
+]
+
+
+def test_an_option_with_no_value_says_so(tmp: Path) -> None:
+    """A flag missing its value must name itself, not exit 1 in silence.
+
+    The failure this replaces is the sixth repeat of this project's standing
+    theme - the diagnostic is what breaks, on exactly the machines most likely
+    to need it - and the sharpest version yet, because the whole cost of the bug
+    is the missing two lines. Every one of these invocations is a person making
+    an ordinary typo, and every one of them got nothing back.
+    """
+    # 1. The pattern is gone. This is the mechanical half: a new tool that copies
+    #    the idiom fails here rather than shipping it. Counted rather than
+    #    name-matched, because the seven `new-agent.sh` sites are seven copies
+    #    and a new one added without a guard should be visible.
+    for rel, want_sites, _, _ in FLAGS_NEEDING_A_VALUE:
+        text = (ROOT / rel).read_text()
+        got_sites = text.count("aiorg_need_value")
+        eq(f"arg-guard: all {want_sites} value-taking flags in {rel} are guarded",
+           got_sites, want_sites)
+
+    # 2. It actually fires, and says which flag. Run the real scripts, not a
+    #    reimplementation - the bug was in the interaction between the option
+    #    loop and `set -e`, and a test that only called the helper would have
+    #    passed against the original code.
+    for rel, _, prefix, flag in FLAGS_NEEDING_A_VALUE:
+        proc = subprocess.run(
+            ["bash", str(ROOT / rel), *prefix, flag],
+            capture_output=True, text=True, cwd=ROOT, timeout=120)
+        blob = proc.stdout + proc.stderr
+        check(f"arg-guard: {rel} {flag} (no value) says the flag needs one",
+              f"{flag} needs a value" in blob,
+              f"exit={proc.returncode} out={blob[:200]!r}")
+        # Exit 2, distinct from the 1 that means "something else went wrong".
+        # Without this the fix would pass on a message and still be ambiguous
+        # about why it stopped.
+        eq(f"arg-guard: {rel} {flag} (no value) exits 2, not 1", proc.returncode, 2)
+
+    # 3. The guard must fire before anything is *created*. A typo in
+    #    new-agent.sh's arguments landing half an agent on disk is a worse
+    #    outcome than the silence this replaced.
+    check("arg-guard: a typo'd new-agent.sh leaves no agent directory behind",
+          not (ROOT / "agents" / "arg-guard-scratch").exists(),
+          "the scratch agent was created despite the guard firing")
+
+    # 4. A value is still accepted - otherwise "dies on a missing value" and
+    #    "ignores every value" are the same test. The two must be told apart.
+    #
+    #    Run against a copy. A real run here appends to state/audit.log, and
+    #    this project's whole position is that a run which did not measure
+    #    anything is not evidence - five 0-second `agent=coder` lines in the log
+    #    would be precisely the pollution the audit log exists to catch, written
+    #    by the test suite. Log path is overridden rather than the tree copied,
+    #    so the run is real rather than skipped.
+    log = tmp / "arg-guard-audit.log"
+    real_log = ROOT / "state" / "audit.log"
+    before = real_log.read_text() if real_log.exists() else ""
+    env = dict(os.environ, AIORG_AUDIT_LOG=str(log))
+    proc = subprocess.run(
+        ["bash", str(ROOT / "tools" / "test-agent.sh"), "coder",
+         "--threshold", "50", "--only", "honesty-no-tests"],
+        capture_output=True, text=True, cwd=ROOT, timeout=300, env=env)
+    blob = proc.stdout + proc.stderr
+    check("arg-guard: --threshold WITH a value is still honoured (regression)",
+          "needs a value" not in blob,
+          f"the guard fired on a well-formed call: {blob[:200]!r}")
+    after = real_log.read_text() if real_log.exists() else ""
+    eq("arg-guard: and the run wrote its audit line to the override, not the real log",
+       after, before)
+
+    # 5. THE MUTATION. Restore the unguarded idiom in the helper and confirm
+    #    the assertions above go red. Rule 20's lesson: an assertion that cannot
+    #    fail is bought with the same confidence as one that can, and this test
+    #    is about a bug that produced a *plausible-looking* silent failure - so
+    #    without this step it could pass against the broken code forever.
+    work = tmp / "argmut"
+    if work.exists():
+        shutil.rmtree(work)
+    shutil.copytree(ROOT, work, symlinks=True,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__"))
+    common = work / "lib" / "common.sh"
+    src = common.read_text()
+    start = src.index("aiorg_need_value() {")
+    end = src.index("\n}\n", start) + 3
+    # Neuter the guard: accept a missing value, exactly as the old code did.
+    common.write_text(
+        src[:start] + 'aiorg_need_value() {\n  return 0\n}\n' + src[end:])
+    proc = subprocess.run(
+        ["bash", str(work / "tools" / "test-agent.sh"), "coder", "--only"],
+        capture_output=True, text=True, cwd=work, timeout=120)
+    blob = proc.stdout + proc.stderr
+    check("arg-guard: MUTATED - restoring the unguarded idiom turns the suite red",
+          not (proc.returncode == 2 and "--only needs a value" in blob),
+          "the guard still passed with its body removed, so the assertion "
+          "above cannot fail and this test proves nothing")
+    shutil.rmtree(work, ignore_errors=True)
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="aiorg-retrieval-"))
     try:
@@ -3521,6 +3651,7 @@ def main() -> int:
             ("every finding is asserted", lambda tmp: test_every_finding_is_asserted_somewhere(tmp)),
             ("the other unowned findings", lambda tmp: test_the_other_unowned_findings(tmp)),
             ("check-models failure modes", lambda tmp: test_check_models_catches_its_own_failure_modes(tmp)),
+            ("a flag with no value", lambda tmp: test_an_option_with_no_value_says_so(tmp)),
         ]
         for name, fn in groups:
             print(f"[{name}]")

@@ -75,6 +75,54 @@ need_cmd() {
 }
 
 # ---------------------------------------------------------------------------
+# An option that needs a value, and does not get one
+# ---------------------------------------------------------------------------
+#
+#   aiorg_need_value <flag> <remaining-arg-count> <usage>
+#
+#     Dies unless at least one argument remains after <flag>. Returns 0
+#     otherwise, so the caller does `aiorg_need_value "$1" $# "$USAGE" || exit 1`
+#     and then `shift 2` as normal.
+#
+# WHY THIS IS A FUNCTION
+#
+# Every option-with-a-value in this project was parsed the same way, in
+# fourteen places across four tools:
+#
+#     --only) ONLY="${2:-}"; shift 2 ;;
+#
+# which is correct until <flag> is the last argument on the command line. Then
+# there is one argument left, `shift 2` fails, and under `set -e` - which all
+# five of these scripts use - the script dies at the shift. Not at the check
+# that would have explained it, and not after a message: just exits 1 with
+# nothing on stdout or stderr.
+#
+# The failure mode is the problem, not the crash. A typo'd flag is the most
+# ordinary thing a person does to a command, and this project's standing theme
+# is that the diagnostic is what breaks, on exactly the machines most likely to
+# need it. Here the caller cannot tell a missing value from a bad agent name, a
+# missing model, or a failed check - they are all exit 1 - and the two words
+# that would have saved the run are never printed. Found by typing
+# `--only` without a value and getting nothing back.
+#
+# Note also that `${2:-}` silently yields the empty string, so even without the
+# crash the value would have been "" rather than an error: `--only ""` and
+# `--only` looked identical to the loop. Dying on a missing value is the only
+# behaviour that tells the truth about what was typed.
+#
+# bootstrap.sh line 35 already carried `shift 2 || true` for this, which is the
+# tell that somebody hit it and patched the one site they were looking at.
+# A guard on a single call site is not a rule; the discipline has to be
+# mechanical, or the next tool repeats it.
+aiorg_need_value() {
+  [ "${2:-0}" -ge 2 ] && return 0
+  printf '%s\n' "[fail] $1 needs a value." >&2
+  printf '%s\n' "       Nothing followed it, so there is no way to tell what you meant." >&2
+  printf '%s\n' "       Usage: $3" >&2
+  exit 2
+}
+
+# ---------------------------------------------------------------------------
 # Naming a model role's resolved variables
 # ---------------------------------------------------------------------------
 

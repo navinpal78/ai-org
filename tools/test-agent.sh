@@ -68,8 +68,8 @@ AGENT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -v|--verbose) VERBOSE=1; shift ;;
-    --only) ONLY="${2:-}"; shift 2 ;;
-    --threshold) THRESHOLD="${2:-80}"; shift 2 ;;
+    --only) aiorg_need_value "$1" $# "./tools/test-agent.sh <agent-name> [options]"; ONLY="${2:-}"; shift 2 ;;
+    --threshold) aiorg_need_value "$1" $# "./tools/test-agent.sh <agent-name> [options]"; THRESHOLD="${2:-80}"; shift 2 ;;
     -h|--help)
       cat <<'EOF'
 Usage: ./tools/test-agent.sh <agent-name> [options]

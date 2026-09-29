@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
       shift
       while [ $# -gt 0 ] && [ "$1" != "--" ]; do QUERIES+=("$1"); shift; done
       ;;
-    --db)      DB="$2"; shift 2 ;;
+    --db)      aiorg_need_value "$1" $# "./tools/run-agent.sh --db <path> [options] -- <agent> <question>"; DB="$2"; shift 2 ;;
     --sources) exec python3 "$AIORG_ROOT/tools/search.py" --db "$AIORG_ROOT/$DB" --sources ;;
     -h|--help) usage 0 ;;
     --)        shift; PROMPT="$*"; break ;;

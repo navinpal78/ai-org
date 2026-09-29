@@ -95,15 +95,17 @@ ACTIONS="read,write"
 RETRIEVAL="off"
 FORCE=0
 
+USAGE_HINT="./tools/new-agent.sh NAME --role ROLE --title T --mission M --reports-to cto"
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --role)       MODEL_ROLE="${2:-}"; shift 2 ;;
-    --runtime)    RUNTIME_ID="${2:-}"; shift 2 ;;
-    --title)      TITLE="${2:-}"; shift 2 ;;
-    --mission)    MISSION="${2:-}"; shift 2 ;;
-    --reports-to) REPORTS_TO="${2:-}"; shift 2 ;;
-    --actions)    ACTIONS="${2:-}"; shift 2 ;;
-    --retrieval)  RETRIEVAL="${2:-}"; shift 2 ;;
+    --role)       aiorg_need_value "$1" $# "$USAGE_HINT"; MODEL_ROLE="${2:-}"; shift 2 ;;
+    --runtime)    aiorg_need_value "$1" $# "$USAGE_HINT"; RUNTIME_ID="${2:-}"; shift 2 ;;
+    --title)      aiorg_need_value "$1" $# "$USAGE_HINT"; TITLE="${2:-}"; shift 2 ;;
+    --mission)    aiorg_need_value "$1" $# "$USAGE_HINT"; MISSION="${2:-}"; shift 2 ;;
+    --reports-to) aiorg_need_value "$1" $# "$USAGE_HINT"; REPORTS_TO="${2:-}"; shift 2 ;;
+    --actions)    aiorg_need_value "$1" $# "$USAGE_HINT"; ACTIONS="${2:-}"; shift 2 ;;
+    --retrieval)  aiorg_need_value "$1" $# "$USAGE_HINT"; RETRIEVAL="${2:-}"; shift 2 ;;
     --force)      FORCE=1; shift ;;
     *) die "Unknown option: $1  (try --help)" ;;
   esac

@@ -37,8 +37,8 @@ usage() { sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -n|--tail)     TAIL="${2:-20}"; shift 2 ;;
-    -a|--agent)    FILTER_AGENT="${2:-}"; shift 2 ;;
+    -n|--tail)     aiorg_need_value "$1" $# "./tools/audit-log.sh [options]"; TAIL="${2:-20}"; shift 2 ;;
+    -a|--agent)    aiorg_need_value "$1" $# "./tools/audit-log.sh [options]"; FILTER_AGENT="${2:-}"; shift 2 ;;
     -f|--failures) ONLY_FAILURES=1; shift ;;
     -r|--raw)      RAW=1; shift ;;
     -s|--stats)    STATS=1; shift ;;
