@@ -384,11 +384,13 @@ Results land in `/tmp/aiorg-cpu-runs/` — copy them out of `/tmp` when done.
 
 Started 08:58 UTC+8 on the scratch copy, exactly per the recipe above, **model
 and `*_THINKS` moved together** (`_MODEL="qwen3:0.6b"` and `_THINKS="false"`
-in one `sed`), ollama serving `qwen3:0.6b`. Ongoing at commit time; expected
-done ~noon UTC+8, ~3h. Raw output in `/tmp/aiorg-cpu-runs/` (`progress.txt`,
-`summary.txt`, `agents/*.out`); **copy it out of `/tmp` to `~/Work/` when
-finished, it does not survive reboot.** First consistency check passed:
-`helpdesk` 10/21 (47%), byte-identical to the 2026-09-29 number.
+in one `sed`), ollama serving `qwen3:0.6b`. **Finished 11:28 UTC+8, 2h30m for
+all 14 runnable agents** - 16 of 16 attempted, `teacher`/`storyteller` "no
+result" by design (roles bottom out above the 8GB CPU fallback). The five
+agents 2026-09-29 managed matched today's percentages exactly, and
+`security-engineer` ran 35 cases in 865s (~25s/case) instead of the ~8x the
+inconsistent config projected. Numbers live in `~/Work/cpu-baseline-2026-09-30/`
+(README + `summary.txt`/`progress.txt`/`<agent>.out`), copied out of `/tmp`.
 
 Even finished, treat it as plumbing evidence: rule 17 applies, 0.6B is not a
 quality signal, and the five research agents ran closed-book. What it buys is

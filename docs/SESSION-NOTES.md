@@ -331,8 +331,11 @@ WARNING for a real coder test prompt); it now has tests. 9 new checks.
 
 Both `*_MODEL` *and* `*_THINKS` moved together on the scratch copy at
 `/tmp/aiorg-cpu` (copy of the repo, `.git` removed), so every agent now runs
-`qwen3:0.6b` with thinking off. Started 08:58 UTC+8, ~25s/case ~3h for 14
-runnable agents; `teacher`/`storyteller` report no result by design. Results in
-`/tmp/aiorg-cpu-runs/` - **copy them out of `/tmp` when done.** helpdesk came
-back 10/21 (47%), matching yesterday's number. These are plumbing evidence, not
-agent quality; `AGENTS.md` rule 17 applies.
+`qwen3:0.6b` with thinking off. Started 08:58 UTC+8, **finished 11:28 (2h30m
+for all 14 runnable agents; 16/16 attempted)**; `teacher`/`storyteller` "no
+result" by design. Results copied to `~/Work/cpu-baseline-2026-09-30/`
+(README + `summary.txt`/`progress.txt`/`<agent>.out`). The five agents
+2026-09-29 managed matched today's percentages to the point, and
+`security-engineer` ran 35 cases in 865s (~25s/case) rather than the ~8x
+against helpdesk the inconsistent config would have produced. These are
+plumbing evidence, not agent quality; `AGENTS.md` rule 17 applies.
