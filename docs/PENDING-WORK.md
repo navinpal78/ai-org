@@ -1,13 +1,17 @@
 # Pending work — pick anything, or none
 
-Written at the end of the audit session, updated 2026-09-29. Everything below is
+Written at the end of the audit session, updated 2026-09-30. Everything below is
 saved, committed and pushed; nothing here is half-done. Repo is at
-`~/Work/ai-org`, clean tree, private remote.
+`~/Work/ai-org`, clean tree, private remote. (2026-09-30: the python mutation
+harness's skip trap and a `--val-frac` knob nobody read were fixed; see
+`docs/SESSION-NOTES.md` for the 2026-09-30 session section. Neither was on this
+list, because both were found by running the tools rather than by reading
+them.)
 
 ## What "healthy" looks like right now
 
 ```
-500 checks passed
+551 checks passed
 1 problem   <- deliberate, documented, known: the security-engineer/cto
                auditor monoculture at 25.0GB usable
 ```
@@ -149,7 +153,7 @@ assertions pin it.
 
 **Before any of it, the verification block at the bottom of
 `docs/SESSION-NOTES.md` is the fastest way to confirm the tree is where this
-note thinks it is.** 500 checks, 1 problem, clean tree, tracking
+note thinks it is.** 551 checks, 1 problem, clean tree, tracking
 `origin/main`.
 
 **Still yours, and unrelated to the code:** rotate the sudo password pasted into

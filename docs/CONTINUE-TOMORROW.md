@@ -1,8 +1,35 @@
 # Continue tomorrow
 
-_Last updated 2026-09-29. **Nothing is in progress and nothing is uncommitted.**
+_Last updated 2026-09-30. **Nothing is in progress and nothing is uncommitted.**
 Clean tree, pushed to a private `github.com/navinpal78/ai-org`.
-500 checks, 1 deliberate error._
+551 checks, 1 deliberate error._
+
+_What changed on 2026-09-30, and the one thing worth knowing first: **the
+`tools/mutation-audit.py` harness was lying in the same direction the shell
+sibling used to.** A four-line locate window with zero margin put 61 of 69
+sites on the window's last row, so one blank line inside the `_mute` constant -
+a change nothing would notice - turned 56 of 69 mutations into no-ops, and the
+old accounting `asserted = len(res) - len(green)` counted every one of those
+SKIPs as asserted, printing a perfect 69/69 with 0 false passes. The harness is
+now AST-located, skip-counts-for-nothing, hard-exits on an unmeasured site, and
+runs the shell-style self-test (a target no test touches must measure 0/2)
+before every pass._
+
+_And on the same day my own new test nearly corrupted it in the opposite
+direction: the first version of `test_mutation_audit_python_harness_is_honest`
+read the live check-agents.py, but the suite is the audit's probe and runs
+inside a worker tree whose target is already muted, so the probe exited 1 for
+every trial and the audit printed an all-RED 69/69 - a false-confidence number
+pointing the wrong way. The probe suite must not care what state the tree is
+in; the group is synthetic now, verified both directions. Honest headline
+unchanged: **68/69 asserted, 1 false pass, 0 skipped**, the 1 being the
+proven-dead `check_cases:447`, now measured rather than asserted._
+
+_Also on 2026-09-30: a real knob nobody read in `finetune/prepare_dataset.py`
+(`--val-frac` was printed and ignored - split hardcoded to every-5th), fixed
+and tested; three new test groups (prep-dataset 9 checks, openwebui failure
+modes, ollama-does-nothing); and the CPU baseline restarted consistently, model
+and `*_THINKS` moving together this time._
 
 _What changed since the last version of this file, and the one thing worth
 knowing: **`tools/check-models.sh` had no tests at all.** It is the instrument
@@ -229,7 +256,7 @@ believed clean is what confirms the clean-up rather than a fresh catastrophe.
 reports **1 error and exits non-zero**, plus two warnings that are information
 rather than defects. The error is the known 28-48GB auditor monoculture and it is
 deliberate - see "What is still red" in `AGENTS.md`. Everything else is clean:
-16 agents, 607 cases, 500 assertions. **If the error count is ever anything other
+16 agents, 607 cases, 551 assertions. **If the error count is ever anything other
 than 1, that is a new problem.**
 
 The two warnings are expected:
@@ -352,6 +379,21 @@ self-consistent on its face. **If you override a model, override its
 
 ~25s/case, so ~3h for the full 643, comparable across all 14 runnable agents.
 Results land in `/tmp/aiorg-cpu-runs/` — copy them out of `/tmp` when done.
+
+### Resumed 2026-09-30 — done right this time
+
+Started 08:58 UTC+8 on the scratch copy, exactly per the recipe above, **model
+and `*_THINKS` moved together** (`_MODEL="qwen3:0.6b"` and `_THINKS="false"`
+in one `sed`), ollama serving `qwen3:0.6b`. Ongoing at commit time; expected
+done ~noon UTC+8, ~3h. Raw output in `/tmp/aiorg-cpu-runs/` (`progress.txt`,
+`summary.txt`, `agents/*.out`); **copy it out of `/tmp` to `~/Work/` when
+finished, it does not survive reboot.** First consistency check passed:
+`helpdesk` 10/21 (47%), byte-identical to the 2026-09-29 number.
+
+Even finished, treat it as plumbing evidence: rule 17 applies, 0.6B is not a
+quality signal, and the five research agents ran closed-book. What it buys is
+one comparable table across all 14 runnable agents under one configuration,
+which is the thing 2026-09-29 could not claim.
 
 ### The argument-guard fix, for reference
 

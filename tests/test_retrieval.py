@@ -2637,6 +2637,59 @@ def _fixture_agent(base: Path, name: str = "probe", **over) -> Path:
     return d
 
 
+def test_own_the_audits_last_two_findings(tmp: Path) -> None:
+    """Own the two findings the honest audit measured as unowned.
+
+    The 2026-09-30 rewrite of tools/mutation-audit.py located sites by AST
+    position and stopped counting skips as asserted, and the headline moved
+    from the 68/69 the old harness printed to 66/69 - two additional false
+    passes that reproduced on a clean probe: check_agent:723 (the too-short
+    SOUL.md warning) and check_runtime_registry:227 (an unreadable registry).
+    The old count had absorbed them the way it absorbed skips. Both fire on
+    a fixture; nothing asserted them. A finding with no asserting test is
+    indistinguishable from a commented-out check, so each gets a test that
+    starts the finding and requires its text - mute either and the suite goes
+    red, which is the audit's definition of owned.
+    """
+    import json as _json
+    import importlib.util as _iu
+
+    spec = _iu.spec_from_file_location("aiorg_own2", ROOT / "tools" / "check-agents.py")
+    mod = _iu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    Rep = mod.Report
+    roles = set(_json.loads((ROOT / "config" / "models.json").read_text(encoding="utf-8"))
+                .get("roles", {}))
+
+    # check_agent:723 - a SOUL.md too long to work with. The fixture's default
+    # 2-word SOUL triggers the OTHER branch (words < 60, line 721), which an
+    # existing assertion already owns; 723 is the words > 1400 warning and had
+    # no owner because no fixture ever wrote a 1500-word SOUL.
+    d = _fixture_agent(Path(tmp) / "soul")
+    (d / "SOUL.md").write_text(("word " * 1500) + "\n", encoding="utf-8")
+    rep = Rep()
+    mod.check_agent(d, rep, roles, mod.known_runtimes())
+    got = " ".join(rep.warnings)
+    check("check_agent: an over-long SOUL.md is a named warning",
+          "the middle is where rules go to die" in got, f"{got!r}")
+
+    # check_runtime_registry:227 - the registry exists but cannot be read.
+    # A directory standing where runtimes.json should be makes read_text raise
+    # IsADirectoryError, which is the OSError branch, not the JSON branch.
+    rg = Path(tmp) / "runtimes-as-a-directory"
+    rg.mkdir()
+    saved = mod.RUNTIMES
+    mod.RUNTIMES = rg
+    try:
+        rep = Rep()
+        mod.check_runtime_registry(rep)
+        got = " ".join(rep.errors)
+        check("runtimes: an unreadable registry is a named error",
+              "could not be read" in got, f"{got!r}")
+    finally:
+        mod.RUNTIMES = saved
+
+
 def test_every_finding_is_asserted_somewhere(tmp: Path) -> None:
     """Mutation audit: 31 of the checker's 69 finding sites were false passes.
 
@@ -3604,6 +3657,382 @@ def test_an_option_with_no_value_says_so(tmp: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
+def test_mutation_audit_python_harness_is_honest() -> None:
+    """The python mutation harness must not convert a skip into a pass.
+
+    Owns the 2026-09-30 fix in tools/mutation-audit.py. The old accounting
+    printed `asserted = n - green`, which counts a SKIP-mutation-did-not-land
+    as asserted on both sides, and the locate window had zero margin (the MUT
+    insertion shifted 61 of 69 sites onto the window's last row). Both were
+    demonstrated live: one blank line inside the MUT constant - a change
+    nothing would notice - turned 56 of 69 mutations into no-ops while the
+    harness reported a perfect 69/69 with zero false passes. Everything below
+    tests the importable functions of the harness, so the suite does not have
+    to run the 5-minute audit on every check.
+    """
+    import importlib.util as _iu
+    _ma_spec = _iu.spec_from_file_location(
+        "mutation_audit", ROOT / "tools" / "mutation-audit.py")
+    ma = _iu.module_from_spec(_ma_spec)
+    _ma_spec.loader.exec_module(ma)
+
+    # Everything below is synthetic, deliberately: the suite is also the
+    # mutation audit's probe, run inside a worker tree whose target already has
+    # one finding muted. A check that reads the live tools/check-agents.py then
+    # fails for the mutation's side effect, the probe exits 1 for every trial,
+    # and the audit reads a perfect "asserted" that measures nothing.
+    def mk_src(n_errors: int = 2) -> str:
+        lines = ["class Rep:\n",
+                 "    def error(self, agent: str, msg: str) -> None:\n        pass\n",
+                 "    def warn(self, agent: str, msg: str) -> None:\n        pass\n",
+                 "rep = Rep()\n",
+                 "def f():\n"]
+        for i in range(n_errors):
+            lines.append(f"    rep.error('e{i}')\n")
+        lines.append("    rep.warn('w')\n")
+        return "".join(lines)
+
+    src = mk_src()
+    sites = ma.find_sites(src)
+    check("mutation-audit: finds error and warn sites inside a function",
+          len(sites) == 3 and [s[2] for s in sites] == ["error", "error", "warn"],
+          f"{sites}")
+
+    st = {s[:3]: ma.mutate(src, s)[0] for s in sites}
+    check("mutation-audit: every real site mutates cleanly",
+          all(v == "landed" for v in st.values()), f"{st}")
+
+    extra = "    def _mute(self, agent: str, msg: str) -> None:\n        return\n\n\n"
+    st2 = {s[:3]: ma.mutate(src, s, mute_text=extra)[0] for s in sites}
+    check("mutation-audit: one extra line in MUT cannot orphan sites",
+          all(v == "landed" for v in st2.values()),
+          "the site-locate window is outgrown by a change in the no-op constant")
+
+    # a mutation that cannot land must be reported as a skip, never a pass
+    bogus = sites[0][:3] + (10 ** 9, 1, 1)
+    check("mutation-audit: an impossible site is a skip, not a pass",
+          ma.mutate(src, bogus)[0] == "skip", "expected skip status")
+
+    # accounting: a skip counts for nothing, and an unmeasured site is a
+    # harness failure rather than something to round into the green column
+    rows = [(s[0], s[1], s[2], "RED") for s in sites[:2]] + \
+           [(sites[2][0], sites[2][1], sites[2][2], "SKIP-mutation-did-not-land")]
+    reds, green, skips, missing = ma.account(rows, 10)
+    check("mutation-audit: accounting separates red from skip",
+          reds == 2 and len(green) == 0 and len(skips) == 1 and missing == 7,
+          f"reds={reds} green={len(green)} skips={len(skips)} missing={missing}")
+    check("mutation-audit: asserted is never derived by subtraction",
+          reds != len(rows) - len(green),
+          "skips leaked into the asserted count - the false-pass shape this "
+          "instrument exists to detect")
+
+    probe = ("class Rep:\n"
+             "    def error(self, agent, msg): pass\n"
+             "    def warn(self, agent, msg): pass\n"
+             "rep = Rep()\n"
+             "def f():\n"
+             "    rep.error('a')\n"
+             "    rep.warn('b')\n")
+    ps = ma.find_sites(probe)
+    check("mutation-audit: the self-test probe has the two sites it claims",
+          len(ps) == 2 and all(p[2] in ("error", "warn") for p in ps), f"{ps}")
+
+
+def _bin_path(root: Path, *names: str) -> Path:
+    """A PATH directory with real tools symlinked in, so a fake SHELL test runs
+    the real interpreters but never touches the host's docker/ollama."""
+    bindir = root / "bin"
+    bindir.mkdir(exist_ok=True)
+    standard = ("dirname", "pwd", "mkdir", "touch", "rm", "cp", "mv", "chmod",
+                "chown", "ln", "uname", "wc", "head", "tail", "basename", "sort",
+                "uniq", "cut", "tr", "find", "realpath", "readlink", "env", "expr",
+                "cat", "grep", "sed", "awk", "date", "sleep", "seq", "hostname")
+    for tool in (*standard, *names):
+        real = shutil.which(tool)
+        if real and not (bindir / tool).exists():
+            (bindir / tool).symlink_to(real)
+    return bindir
+
+
+def _write_fake_docker(bindir: Path, mode: str) -> None:
+    fake = f"""#!/bin/sh
+mode="{mode}"
+case "${{1:-}}" in
+  compose)
+    [ "$mode" = "good" ] || [ "$mode" = "absent" ] || {{ echo "no compose" >&2; exit 1; }}
+    echo "Compose started"
+    ;;
+  info)
+    [ "$mode" != "nodaemon" ] || {{ echo "Cannot connect to the Docker daemon" >&2; exit 1; }}
+    echo "Server Version: 26.1"
+    ;;
+  inspect)
+    [ "$mode" != "absent" ] || {{ echo "absent"; exit 0; }}
+    echo "healthy"
+    ;;
+  --version) echo "Docker version 26.1.0" ;;
+  *) exit 0 ;;
+esac
+"""
+    p = bindir / "docker"
+    p.write_text(fake)
+    p.chmod(0o755)
+
+
+def test_openwebui_script_failure_modes(tmp: Path) -> None:
+    """Every guarded branch of scripts/30-openwebui.sh that was fixed and then
+    left with no test: the container that cannot reach a local Ollama, the
+    daemon that is down, the container that never appears, and the machine
+    with no docker at all.
+
+    All four were fixed because the human ran the script and read the output;
+    none had a regression test, so any of them could be reintroduced silently.
+    Rule 18 is the reason they are testable at all: a fake `docker` on PATH is
+    enough to reach every branch. The compose file is the interesting output,
+    because the host.docker.internal mapping is the fix for the bug where the
+    UI came up, looked configured, and could never reach a model.
+    """
+    for mode, expect_rc, need, must_have, must_avoid in (
+        # healthy local box: the compose file must carry the host-gateway fix
+        ("good", 0, "Healthy.",
+         (
+             "OLLAMA_BASE_URL=http://host.docker.internal:11434",
+             "host.docker.internal:host-gateway",
+         ),
+         ()),
+        # daemon installed but not running: must not pretend success
+        ("nodaemon", 1, "daemon is not reachable", (), ()),
+        # compose reported success but the container is not there
+        ("absent", 1, "reported success", (), ()),
+    ):
+        root = Path(tmp) / f"openwebui-{mode}"
+        for sub in ("lib", "config", "scripts"):
+            (root / sub).mkdir(parents=True)
+        (root / "lib" / "common.sh").write_text((ROOT / "lib" / "common.sh").read_text())
+        (root / "config" / "profile.env").write_text(
+            (ROOT / "config" / "profile.env").read_text())
+        bindir = _bin_path(root, *("bash", "sh", "cat", "awk", "sed", "date",
+                                  "hostname", "sleep", "seq"))
+        _write_fake_docker(bindir, mode)
+        (root / "scripts" / "30-openwebui.sh").write_text(
+            (ROOT / "scripts" / "30-openwebui.sh").read_text())
+
+        proc = subprocess.run(
+            [str(bindir / "bash"), str(root / "scripts" / "30-openwebui.sh")],
+            capture_output=True, text=True, cwd=root, timeout=120,
+            env={"PATH": str(bindir), "HOME": str(root)})
+        blob = proc.stdout + proc.stderr
+        check(f"openwebui[{mode}]: exit {expect_rc}",
+              proc.returncode == expect_rc,
+              f"rc={proc.returncode}, out={blob[-400:]!r}")
+        check(f"openwebui[{mode}]: expected message",
+              need in blob, f"out={blob[-400:]!r}")
+        if must_have:
+            compose = root / "compose" / "openwebui" / "docker-compose.yml"
+            text = compose.read_text() if compose.exists() else ""
+            for needle in must_have:
+                check(f"openwebui[{mode}]: compose contains {needle!r}",
+                      needle in text, f"compose={text[:400]!r}")
+            for bad in must_avoid:
+                check(f"openwebui[{mode}]: compose avoids {bad!r}",
+                      bad not in text, "unexpected in the generated compose file")
+
+    # remote Ollama: the container must talk to the GPU box, and must NOT add
+    # the host-gateway mapping - host.docker.internal is a lie on another LAN.
+    root = Path(tmp) / "openwebui-remote"
+    for sub in ("lib", "config", "scripts"):
+        (root / sub).mkdir(parents=True)
+    (root / "lib" / "common.sh").write_text((ROOT / "lib" / "common.sh").read_text())
+    (root / "config" / "profile.env").write_text(
+        (ROOT / "config" / "profile.env").read_text())
+    bindir = _bin_path(root, *("bash", "sh", "cat", "awk", "sed", "date",
+                               "hostname", "sleep", "seq"))
+    _write_fake_docker(bindir, "good")
+    (root / "scripts" / "30-openwebui.sh").write_text(
+        (ROOT / "scripts" / "30-openwebui.sh").read_text())
+    proc = subprocess.run(
+        [str(bindir / "bash"), str(root / "scripts" / "30-openwebui.sh")],
+        capture_output=True, text=True, cwd=root, timeout=120,
+        env={"PATH": str(bindir), "HOME": str(root), "AI_OLLAMA_HOST": "192.168.1.50"})
+    compose = root / "compose" / "openwebui" / "docker-compose.yml"
+    text = compose.read_text() if compose.exists() else ""
+    check("openwebui[remote]: container points at the GPU box",
+          "OLLAMA_BASE_URL=http://192.168.1.50:11434" in text, f"{text[:400]!r}")
+    check("openwebui[remote]: no host-gateway mapping for a remote server",
+          "host-gateway" not in text, "host.docker.internal is meaningless remotely")
+
+    # no docker at all: the UI is optional, so this must be a graceful skip,
+    # not a build failure, and must not create a compose file.
+    root = Path(tmp) / "openwebui-nodocker"
+    for sub in ("lib", "config", "scripts"):
+        (root / sub).mkdir(parents=True)
+    (root / "lib" / "common.sh").write_text((ROOT / "lib" / "common.sh").read_text())
+    (root / "config" / "profile.env").write_text(
+        (ROOT / "config" / "profile.env").read_text())
+    bindir = _bin_path(root, "bash", "sh", "cat", "awk", "sed", "date", "hostname")
+    (root / "scripts" / "30-openwebui.sh").write_text(
+        (ROOT / "scripts" / "30-openwebui.sh").read_text())
+    proc = subprocess.run(
+        [str(bindir / "bash"), str(root / "scripts" / "30-openwebui.sh")],
+        capture_output=True, text=True, cwd=root, timeout=120,
+        env={"PATH": str(bindir), "HOME": str(root)})
+    blob = proc.stdout + proc.stderr
+    check("openwebui[nodocker]: graceful skip, exit 0",
+          proc.returncode == 0 and "Skipping Open WebUI" in blob,
+          f"rc={proc.returncode}, out={blob[-300:]!r}")
+    check("openwebui[nodocker]: wrote no compose file",
+          not (root / "compose" / "openwebui" / "docker-compose.yml").exists(),
+          "script produced a compose file it then could not use")
+
+
+def test_ollama_script_knows_when_it_has_nothing_to_do(tmp: Path) -> None:
+    """scripts/10-ollama.sh is about the LOCAL machine. When AI_OLLAMA_HOST
+    points at another box, running it answered a machine the user was not
+    setting up, and installed an Ollama nothing used. The remote early-return
+    is that fix; the CPU-box path is the other end of the same script.
+
+    Neither is tested anywhere, and the remote one is exactly the class of
+    branch a future edit is likely to break: it is a `return/exit` inserted
+    near the top of a long script.
+    """
+    # remote: must do nothing at all. The PATH has no curl and no ollama, so
+    # any attempt to install would abort (set -e) with a non-zero exit.
+    root = Path(tmp) / "ollama-remote"
+    for sub in ("lib", "config", "scripts"):
+        (root / sub).mkdir(parents=True)
+    (root / "lib" / "common.sh").write_text((ROOT / "lib" / "common.sh").read_text())
+    (root / "config" / "profile.env").write_text(
+        (ROOT / "config" / "profile.env").read_text())
+    bindir = _bin_path(root, "bash", "sh", "awk", "sed", "grep", "cat")
+    (root / "scripts" / "10-ollama.sh").write_text(
+        (ROOT / "scripts" / "10-ollama.sh").read_text())
+    proc = subprocess.run(
+        [str(bindir / "bash"), str(root / "scripts" / "10-ollama.sh")],
+        capture_output=True, text=True, cwd=root, timeout=60,
+        env={"PATH": str(bindir), "HOME": str(root), "AI_OLLAMA_HOST": "192.168.1.50"})
+    blob = proc.stdout + proc.stderr
+    check("ollama[remote]: exits 0 saying there is nothing to install",
+          proc.returncode == 0 and "nothing for this script to do" in blob,
+          f"rc={proc.returncode}, out={blob[-300:]!r}")
+    check("ollama[remote]: never attempted an install",
+          "ollama.com/install.sh" not in blob and "curl" not in blob,
+          "the remote branch reached the installer - that is the bug it fixes")
+
+    # local CPU box: fake ollama present, no GPU in the profile. The script must
+    # warn about CPU, use the fake instead of installing, reach the non-root
+    # exit, and stay at exit 0 - the whole path up to the root-only part.
+    root = Path(tmp) / "ollama-local"
+    for sub in ("lib", "config", "scripts"):
+        (root / sub).mkdir(parents=True)
+    (root / "lib" / "common.sh").write_text((ROOT / "lib" / "common.sh").read_text())
+    (root / "config" / "profile.env").write_text(
+        (ROOT / "config" / "profile.env").read_text())
+    bindir = _bin_path(root, "bash", "sh", "awk", "sed", "grep", "cat", "curl",
+                       "systemctl", "journalctl", "getent", "id", "usermod")
+    toc = bindir / "ollama"
+    toc.write_text('#!/bin/sh\necho "ollama version 0.5.0"\n')
+    toc.chmod(0o755)
+    (root / "scripts" / "10-ollama.sh").write_text(
+        (ROOT / "scripts" / "10-ollama.sh").read_text())
+    proc = subprocess.run(
+        [str(bindir / "bash"), str(root / "scripts" / "10-ollama.sh")],
+        capture_output=True, text=True, cwd=root, timeout=60,
+        env={"PATH": str(bindir), "HOME": str(root)})
+    blob = proc.stdout + proc.stderr
+    check("ollama[local cpu]: warns about CPU and skips the root-only part",
+          "No GPU detected" in blob and "Not running as root" in blob,
+          f"rc={proc.returncode}, out={blob[-400:]!r}")
+    check("ollama[local cpu]: exit 0 with a fake ollama",
+          proc.returncode == 0,
+          "the local CPU path aborted before reaching its non-root exit")
+    check("ollama[local cpu]: did not reach for the installer",
+          "ollama.com/install.sh" not in blob,
+          "a local fake was present; installing is a real-machine action")
+
+
+def test_prepare_dataset_leakage_and_split(tmp: Path) -> None:
+    """finetune/prepare_dataset.py has a safety-critical check - refusing to let
+    the agent's own test prompts leak into training data - and zero tests.
+
+    The leakage check is the whole point of the script: a fine-tune trained on
+    its own test cases scores 100% on paper and does nothing in production.
+    Also owns the --val-frac fix: the argument was accepted, printed, and then
+    silently ignored - the split was hardcoded to every-5th-example-to-val
+    whatever fraction you asked for (measured: --val-frac 0.9 on 25 rows wrote
+    20 train / 5 val). Same class as the two timeout units and the flag with
+    no value: an option nobody reads.
+    """
+    import subprocess as sp
+
+    def run(agent: str, *args: str) -> tuple[int, str]:
+        p = sp.run([sys.executable, str(ROOT / "finetune" / "prepare_dataset.py"),
+                    "--agent", agent, *args],
+                   capture_output=True, text=True, timeout=60,
+                   cwd=ROOT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+        return p.returncode, p.stdout + p.stderr
+
+    # clean 25-row dataset: deterministic every-5th split, exit 0
+    clean = Path(tmp) / "clean.tsv"
+    clean.write_text("".join(
+        f"row{i} ::: user question {i} ::: approved reply {i}\n" for i in range(25)))
+    out = Path(tmp) / "ds.jsonl"
+    rc, blob = run("coder", "--input", str(clean), "--out", str(out))
+    tr, va = out.with_name(out.stem + "-train.jsonl"), out.with_name(out.stem + "-val.jsonl")
+    check("prepare-dataset: clean build exits 0",
+          rc == 0, f"rc={rc}, out={blob[-300:]!r}")
+    check("prepare-dataset: writes train and val deterministically",
+          tr.exists() and va.exists()
+          and len(tr.read_text().splitlines()) == 20
+          and len(va.read_text().splitlines()) == 5,
+          "expected the documented every-5th split for --val-frac 0.2")
+
+    # a real coder test prompt must be refused as training data
+    leaky = Path(tmp) / "leaky.tsv"
+    leaky.write_text(
+        "leak ::: Write a function that parses a CSV file. Do not run anything. "
+        "::: approved reply\n")
+    rc, blob = run("coder", "--input", str(leaky), "--out", str(out.with_name("l.jsonl")))
+    check("prepare-dataset: leaks are a hard failure",
+          rc == 1 and "LEAKAGE WARNING" in blob,
+          f"rc={rc}, out={blob[-300:]!r}")
+
+    # --val-frac must be honoured, not printed and ignored
+    rc, blob = run("coder", "--input", str(clean), "--val-frac", "0.5",
+                   "--out", str(out.with_name("h.jsonl")))
+    ht = out.with_name("h-train.jsonl")
+    hv = out.with_name("h-val.jsonl")
+    check("prepare-dataset: --val-frac 0.5 splits 12/13",
+          rc == 0 and ht.exists() and hv.exists()
+          and len(ht.read_text().splitlines()) == 12
+          and len(hv.read_text().splitlines()) == 13,
+          f"rc={rc}; 0.5 asked for, got {len(hv.read_text().splitlines()) if hv.exists() else '?'} val / {len(ht.read_text().splitlines()) if ht.exists() else '?'} train")
+
+    # out-of-range fractions are a hard error, not a silent clamp
+    rc, blob = run("coder", "--input", str(clean), "--val-frac", "1.5",
+                   "--out", str(out.with_name("b.jsonl")))
+    check("prepare-dataset: --val-frac outside 0-1 is refused",
+          rc == 2 and "--val-frac must be between 0 and 1" in blob,
+          f"rc={rc}, out={blob[-200:]!r}")
+
+    # validate-only mode on a clean file produced above
+    rc, blob = run("coder", "--validate", str(tr))
+    check("prepare-dataset: --validate passes a clean file",
+          rc == 0, f"rc={rc}, out={blob[-300:]!r}")
+
+    # argument failures
+    rc, blob = run("does-not-exist", "--input", str(clean), "--out", str(out))
+    check("prepare-dataset: unknown agent named clearly",
+          rc == 1 and "No SOUL.md" in blob, f"rc={rc}, out={blob[-200:]!r}")
+    rc, blob = run("coder", "--input", str(Path(tmp) / "missing.tsv"), "--out", str(out))
+    check("prepare-dataset: missing input refused",
+          rc == 1 and "No such file" in blob, f"rc={rc}, out={blob[-200:]!r}")
+    bad = Path(tmp) / "bad.xyz"
+    bad.write_text("some data")
+    rc, blob = run("coder", "--input", str(bad), "--out", str(out))
+    check("prepare-dataset: unsupported extension refused",
+          rc == 1 and "Unsupported extension" in blob, f"rc={rc}, out={blob[-200:]!r}")
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="aiorg-retrieval-"))
     try:
@@ -3652,6 +4081,11 @@ def main() -> int:
             ("the other unowned findings", lambda tmp: test_the_other_unowned_findings(tmp)),
             ("check-models failure modes", lambda tmp: test_check_models_catches_its_own_failure_modes(tmp)),
             ("a flag with no value", lambda tmp: test_an_option_with_no_value_says_so(tmp)),
+            ("mutation-audit harness is honest", lambda tmp: test_mutation_audit_python_harness_is_honest()),
+            ("the last two findings are owned", lambda tmp: test_own_the_audits_last_two_findings(tmp)),
+            ("openwebui failure modes", lambda tmp: test_openwebui_script_failure_modes(tmp)),
+            ("ollama script knows when to do nothing", lambda tmp: test_ollama_script_knows_when_it_has_nothing_to_do(tmp)),
+            ("prepare-dataset leakage and split", lambda tmp: test_prepare_dataset_leakage_and_split(tmp)),
         ]
         for name, fn in groups:
             print(f"[{name}]")

@@ -17,7 +17,7 @@ needs either an owner decision or a decision to start a new audit block (see Pen
 
 ## Important details
 
-- Expected baseline, and what "healthy" means: 16 agents, 607 cases, **500 assertions**, 2 info
+- Expected baseline, and what "healthy" means: 16 agents, 607 cases, **551 assertions**, 2 info
   warnings, 0 phantom model tags, 0 family warnings, **exactly 1 error** (deliberate).
 - `bootstrap.sh check` **exits 1** by design. That is the known auditor-monoculture error, not a
   regression. If the error count is ever anything other than 1, that is a new problem.
@@ -31,7 +31,7 @@ needs either an owner decision or a decision to start a new audit block (see Pen
   against small local models, do not treat a CPU or 0.6B score as a quality signal.
 - `ollama` is **not** running (was stopped deliberately at the end of the doc-correction pass).
 - A fresh clone with no GPU and no model server works: warns 16× to run `./bootstrap.sh detect`,
-  then after `detect` reaches 500 checks with 1 known error. Verified twice.
+  then after `detect` reaches 551 checks with 1 known error. Verified twice.
 
 ## Work completed this session
 
@@ -229,7 +229,7 @@ git status -sb                     # ## main...origin/main, no divergence
 git status --porcelain | wc -l     # 0
 ./bootstrap.sh check 2>&1 | grep -E "checks passed|problem\(s\)"
 #   1 problem(s). Fix these before trusting a test score...
-#   500 checks passed
+#   551 checks passed
 python3 tools/mutation-audit.py    # ~5 min: 68/69 owned, 1 proved dead
 bash tools/mutation-audit.sh       # seconds: 9/9 owned, and it self-tests first
 ```
@@ -246,3 +246,93 @@ Read it.** It must say `self-test ok`, and it exits non-zero rather than print a
 coverage number if it cannot prove it can fail. A clean `9/9` from a run whose
 first line is missing is worth nothing — that is precisely how it reported 8/8
 while every mutation was dying.
+
+## Session 2026-09-30: the python harness's own skip trap, and the probe-suite bug my test introduced
+
+### The python mutation harness was lying in the same direction as the shell one
+
+`tools/mutation-audit.py` located the 69 finding sites with a four-line forward
+window and no margin (61 of 69 sites sat on the window's last row). A window
+that tight and a no-op whose insertion shifts every site makes the mutation
+fragile: add one blank line to the `_mute` constant - a change nothing notices -
+and 56 of 69 mutations no longer land. Each became a SKIP, and the accounting
+`asserted = len(res) - len(green)` counted every SKIP as asserted on both sides,
+so the script printed a perfect `69/69 asserted, 0 false passes` while the line
+above admitted those sites had "counted for nothing". The shell sibling had
+been fixed for exactly this; the python harness had not.
+
+Rewritten in one day:
+- sites are located by AST position, applied to the text through the computed
+  insertion shift, with column pin and a re-count verifying the landing;
+- `account()` counts SKIP for nothing, and a site that never reported is a hard
+  `exit 2` - the ratio comes from rows that actually ran;
+- a self-test mirroring the shell sibling runs first (`AIORG_MUT_SELFTEST=0`
+  child audits a probe target no test touches and must measure `0/2`), so a
+  harness that cannot report a false pass refuses to print any number.
+
+### Two bugs in my own day's work, found by running the instrument (measure, don't trust)
+
+1. **First self-test version shipped with `NameError: name 're' is not
+   defined`.** The imported-but-unused `re` was dropped in the rewrite; the
+   self-test uses it. Caught on the first real run, fixed in one line.
+2. **My new suite test nearly corrupted the audit in the opposite direction.**
+   `test_mutation_audit_python_harness_is_honest` first read the *live*
+   `tools/check-agents.py` and asserted harness invariants on it. But the suite
+   is also the audit's probe, run inside a worker tree whose target already has
+   one finding muted. The test then failed for the mutation's side effect, the
+   probe exited 1 for every trial, and the audit printed an all-RED `69/69
+   asserted, 0 false passes` - a false-confidence number pointing the wrong way.
+   The fix is structural: **the probe suite must not care what state the tree
+   is in.** The group now uses only synthetic sources; verified both directions
+   - dead site muted -> suite stays green (rc 0), owned site muted -> suite goes
+   red with a genuine assertion failure (rc 1) and my group still passes.
+
+The old headline had absorbed two more sites than just the skips: the honest
+first measurement was **66/69 asserted, 3 false passes, 0 skipped**. Verified
+each extra one by muting it on a clean probe before touching anything:
+
+- `check_agent:723` - the "SOUL.md is over 1400 words" **warning**. Line 721's
+  short-SOUL sibling had an assertion since yesterday; the over-1400 branch had
+  never fired because no fixture ever wrote that much text.
+- `check_runtime_registry:227` - an **unreadable registry**. The
+  `could not be read` OSError branch had no test; fixtures always used a
+  valid or broken-JSON file.
+
+Both got a test in `test_own_the_audits_last_two_findings` and were verified
+by the audit's own definition first - mute each one and the suite must go red.
+Result after that: **68/69 asserted, 1 false pass, 0 skipped** - the same
+headline the docs always claimed, reached by measurement rather than claimed
+synthetically. The 1 is the proven-dead `check_cases:447`, asserted dead by an
+invariant; an unreachable finding cannot be silenced, so it always reads green.
+
+### A real knob nobody read: `--val-frac` in finetune/prepare_dataset.py
+
+`write_dataset` called itself with a hardcoded `0.2` and split on `i % 5 == 0`,
+so `--val-frac 0.9` printed proudly and split 20/80. Measured, then fixed:
+the split boundary is now `int(i * val_frac)`, which reproduces the every-5th
+rows exactly at the default and honours any other fraction; out-of-range values
+are a hard `ap.error` (exit 2), not a silent clamp. `--val-frac` is threaded
+through `report()`. The leakage check itself already worked (rc 1 + LEAKAGE
+WARNING for a real coder test prompt); it now has tests. 9 new checks.
+
+### Suite growth and the regression tests added this session
+
+- `test_mutation_audit_python_harness_is_honest` (synthetic harness accounting)
+- `test_openwebui_script_failure_modes` (fake docker: good / daemon-down /
+  script-reported-success / remote-host / no-docker)
+- `test_ollama_script_knows_when_it_has_nothing_to_do` (remote host, local CPU
+  with a fake `ollama`)
+- `test_prepare_dataset_leakage_and_split` (leak refusal, deterministic split,
+  `--val-frac` honoured + range-checked, validate mode, three argument failures)
+
+`./bootstrap.sh check`: **551 checks passed**, 1 deliberate problem, rc 1.
+
+### CPU baseline restarted, consistently this time
+
+Both `*_MODEL` *and* `*_THINKS` moved together on the scratch copy at
+`/tmp/aiorg-cpu` (copy of the repo, `.git` removed), so every agent now runs
+`qwen3:0.6b` with thinking off. Started 08:58 UTC+8, ~25s/case ~3h for 14
+runnable agents; `teacher`/`storyteller` report no result by design. Results in
+`/tmp/aiorg-cpu-runs/` - **copy them out of `/tmp` when done.** helpdesk came
+back 10/21 (47%), matching yesterday's number. These are plumbing evidence, not
+agent quality; `AGENTS.md` rule 17 applies.

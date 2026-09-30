@@ -116,7 +116,7 @@ Complete and structurally validated:
 | `storyteller` | 45 | read-only | read | Long-form fiction. Read-only because a story lives in the reply, not because acting is dangerous. Weighted against the good-looking empty story |
 | `personal` | 18 | read-only | read | Private offline companion for adult/kink and technical conversation. Unfiltered in *tone*, read-only on the *machine* - the two are unrelated. Built 2026-09-27, the last of the non-GPU agents |
 
-607 test cases, all structurally valid, plus 460 assertions in
+607 test cases, all structurally valid, plus 551 assertions in
 `tests/test_retrieval.py`. `./bootstrap.sh check` is **red** right now, on one
 known catalog bug and nothing else - see "What is still red" under *The
 monoculture* below for why that is deliberate and what to do about it. It also
@@ -480,6 +480,34 @@ reported numbers that looked like findings about the project while being bugs in
 the harness: a scratch-directory race that made the total move between identical
 runs, and a skipped mutation counted as a pass.
 
+**A third, related bug was live until 2026-09-30, and it is the reason the
+header now reads the way it does.** The python harness located sites with a
+four-line forward window and counted a mutation that did not land (SKIP) as
+*asserted* on both sides of the ratio. Demonstrated live: one extra blank line
+inside the `_mute` constant - a change nothing would notice - shifted 56 of the
+69 sites out of the window, every one came back SKIP, and the script printed a
+perfect `true: 69/69, false passes: 0` while its own previous line said those
+sites had "counted for nothing". Sites are now located by AST position carried
+through the insertion shift, skips are excluded from the ratio and reported as
+not asserted, a site with no result is a hard `exit 2`, and the harness's own
+self-test - a target no test touches, which must measure `0/2`, mirroring the
+shell sibling - runs before every pass. `test_mutation_audit_python_harness_is_honest`
+in the suite asserts the accounting directly, so a regression is a failing test,
+not a new headline.
+
+**The honest first measurement was 66/69, and the two extra false passes were
+real, not harness error.** `check_agent:723` (the "SOUL.md is over 1400 words"
+warning, which no fixture had ever written enough words to fire) and
+`check_runtime_registry:227` (an unreadable registry) both reproduced muted ->
+suite green on a clean probe. The old "68/69" had absorbed them the way it
+absorbed skips. Both now have a test that starts the finding on a fixture and
+demands its text, verified in both directions, so the measured headline is
+**68/69 asserted, 1 false pass, 0 skipped** - the same number as the old claim,
+now true by measurement rather than by subtraction. The 1 false pass is
+`check_cases:447`, the unreachable "no prompt column" guard, asserted dead by
+an invariant; an unreachable finding cannot be silenced, so it will always read
+green.
+
 The shell sibling is `tools/mutation-audit.sh` (faster; no python harness
 needed). It is a **separate script on purpose** - it finds sites by grepping,
 because a shell script has no AST, and rule 19 is the reason not to merge two
@@ -701,7 +729,7 @@ assertions in `test_independence_survives_every_hardware_tier`.
 
 **What is still red, and why it cannot be fixed by adding a candidate.** As of
 2026-09-26 `./bootstrap.sh check` is **red** on exactly one thing: the 28-48GB
-band, 1 error, with 607 cases and 460 assertions otherwise clean. The owner's
+band, 1 error, with 607 cases and 551 assertions otherwise clean. The owner's
 earlier choice was to leave it red and revisit when the GPU arrives rather than
 scope the guarantee to a card band; that decision covered the low band too, and
 the low band has now been fixed on the owner's instruction, which supersedes it
@@ -1249,7 +1277,7 @@ alongside the untrusted page text, on the reasoning that the injection warning
 system slot is the one place page text cannot reach, so the SOUL and the warning
 both belong there.
 
-`tests/test_retrieval.py` (460 assertions) starts its own loopback server and
+`tests/test_retrieval.py` (551 assertions) starts its own loopback server and
 asserts every one of those refusals, and runs as part of `./bootstrap.sh check`.
 
 ### The gap the research department did not close

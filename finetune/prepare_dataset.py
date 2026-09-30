@@ -176,8 +176,15 @@ def write_dataset(
 ) -> tuple[Path, Path]:
     out.parent.mkdir(parents=True, exist_ok=True)
     train, val = [], []
-    # Deterministic split: every 5th example goes to validation. Reproducible,
-    # which matters when you are comparing two training runs.
+    # Deterministic split that honours the requested fraction. The old text here
+    # promised val_frac and hardcoded `i % 5 == 0`, so --val-frac 0.9 wrote a 20%
+    # validation set and said nothing about it - an option nobody reads, the
+    # same class as the two timeout units. The cut boundary is a function of
+    # `int(i * val_frac)`, which for 0.2 lands on exactly the old every-5th rows
+    # (0, 5, 10, ...), so the default behaviour is unchanged and any other
+    # fraction finally does what it says. Reproducible across runs, which
+    # matters when you are comparing two training runs.
+    last_cut = -1
     for i, row in enumerate(rows):
         record = {
             "messages": [
@@ -186,7 +193,12 @@ def write_dataset(
                 {"role": "assistant", "content": row["assistant"]},
             ]
         }
-        (val if i % 5 == 0 and val_frac > 0 else train).append(record)
+        cut = int(i * val_frac)
+        if val_frac > 0 and cut > last_cut:
+            val.append(record)
+            last_cut = cut
+        else:
+            train.append(record)
 
     train_path = out.with_name(out.stem + "-train.jsonl")
     val_path = out.with_name(out.stem + "-val.jsonl")
@@ -215,6 +227,9 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    if not 0.0 <= args.val_frac <= 1.0:
+        ap.error(f"--val-frac must be between 0 and 1, got {args.val_frac}")
+
     soul_path = ROOT / "agents" / args.agent / "SOUL.md"
     if not soul_path.exists():
         print(f"[fail] No SOUL.md for agent '{args.agent}'.", file=sys.stderr)
@@ -226,7 +241,7 @@ def main() -> int:
     # ---- validate-only mode ----
     if args.validate:
         rows = read_jsonl(args.validate)
-        return report(rows, test_prompts, args.agent, system_prompt, None)
+        return report(rows, test_prompts, args.agent, system_prompt, None, args.val_frac)
 
     # ---- build mode ----
     if not args.input:
@@ -257,7 +272,7 @@ def main() -> int:
         return 1
     print(f"  Found {len(rows)} example(s)")
 
-    return report(rows, test_prompts, args.agent, system_prompt, args.out)
+    return report(rows, test_prompts, args.agent, system_prompt, args.out, args.val_frac)
 
 
 def report(
@@ -266,6 +281,7 @@ def report(
     agent: str,
     system_prompt: str,
     out: Path | None,
+    val_frac: float,
 ) -> int:
     print()
     print(f"  Dataset report for agent '{agent}'")
@@ -314,7 +330,7 @@ def report(
         print("        model. Prefer prompt-and-test for now. See finetune/README.md")
         print("  " + "-" * 60)
 
-    train_path, val_path = write_dataset(rows, system_prompt, out, 0.2)
+    train_path, val_path = write_dataset(rows, system_prompt, out, val_frac)
     print()
     print(f"  Wrote {display(train_path)}")
     print(f"  Wrote {display(val_path)}")
