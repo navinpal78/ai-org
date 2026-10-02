@@ -2,6 +2,9 @@
 description: AI Organisation CEO runtime adapter. Uses the canonical CEO package as the authoritative organisational context.
 mode: primary
 maxSteps: 20
+tools:
+  "*": false
+
 permission:
   edit: deny
   bash: deny
