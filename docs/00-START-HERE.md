@@ -85,6 +85,11 @@ That does five things in order. You can also run them individually:
 | `./bootstrap.sh status` | Shows what is installed and running | no |
 | `./bootstrap.sh doctor` | Diagnoses problems | no |
 
+**Doing this on the real GPU box?** `docs/DEPLOY-GPU.md` is the full runbook -
+what fits a given card, the headless-machine setup, and the exact order to run
+things in. On a 12GB card, running the box headless is the difference between
+`teacher`/`storyteller` working and not working; that file explains why.
+
 ### What "detect" actually does
 
 This is the part that makes everything else work, so it is worth understanding.
