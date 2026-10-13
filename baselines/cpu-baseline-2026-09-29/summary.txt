@@ -1,0 +1,6 @@
+helpdesk             rc=1    338s  10/21 passed (47%)
+coder                rc=1    500s  8/19 passed (42%)
+personal             rc=1    344s  12/18 passed (66%)
+languages            rc=1    921s  33/47 passed (70%)
+teacher              rc=1      0s  no result
+research-officer     rc=1   1175s  15/46 passed (32%)

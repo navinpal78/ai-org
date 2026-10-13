@@ -1,0 +1,16 @@
+helpdesk             rc=1    295s  10/21 passed (47%)
+coder                rc=1    648s  8/19 passed (42%)
+personal             rc=1    214s  12/18 passed (66%)
+languages            rc=1    819s  33/47 passed (70%)
+teacher              rc=1      0s  no result
+research-officer     rc=1    571s  15/46 passed (32%)
+security-engineer    rc=1    865s  26/35 passed (74%)
+network-engineer     rc=1    754s  12/29 passed (41%)
+storage-engineer     rc=1    759s  19/29 passed (65%)
+tech-researcher      rc=1    493s  15/44 passed (34%)
+design-researcher    rc=1    363s  22/44 passed (50%)
+education-researcher rc=1    533s  27/41 passed (65%)
+web-researcher       rc=1    781s  25/40 passed (62%)
+cto                  rc=1   1392s  10/63 passed (15%)
+ceo                  rc=1    500s  26/54 passed (48%)
+storyteller          rc=1      0s  no result

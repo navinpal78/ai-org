@@ -1,0 +1,8 @@
+aiorg_effective_think: teacher has no recorded thinking capability; running think=off until it is confirmed with tools/check-models.sh
+         think downgraded: 'on' requested, 'off' sent
+           '' has no thinking channel. See aiorg_effective_think in lib/common.sh.
+[fail] No model resolved for role 'teacher'.
+  Available roles: coding reasoning adversarial-review adjudication evidence-review fast narrative translation teacher personal vision embedding
+  If this role resolved to nothing, your hardware cannot fit a candidate for it
+  yet. Add a smaller one in config/models.json, or change AGENT_MODEL_ROLE in
+  agents/teacher/agent.conf
