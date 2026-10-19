@@ -126,6 +126,8 @@ Chalaak was invoked through OpenCode against the local Ollama model. Unlike the 
 
 1. **Chalaak is a working agent, verified on behaviour.** Capability ceiling is bounded, explicit, verifiable tasks: read named files, compare, report in a fixed structure. It is not a substitute for a frontier model on open-ended synthesis or self-scoped work.
 2. **Cold-start dominated latency.** `OLLAMA_KEEP_ALIVE` is unset, so the default 5-minute idle eviction applied and most of each run was spent reloading 6.9 GB into VRAM. Tests 4 and 5 isolate the cost: **98 s cold vs 38 s warm — roughly 60 s of pure reload per task.**
+
+   **Remediation status (2026-10-20):** applied at runtime by loading the model with an explicit `keep_alive`, which holds until Ollama next restarts. The durable systemd change is staged at `infrastructure/ollama/override.conf` and **requires root to install** — see `infrastructure/ollama/README.md`. Until it is installed, the fix is temporary.
 3. **The `opencode` CLI was unusable at the time of testing.** A managed server was listening on 127.0.0.1:49374 while the CLI's own service record held no matching port/pid entry, so each invocation tried to start a second server and aborted. Tests 1–3 only succeeded because `--standalone` was passed. **Root cause: OpenCode's managed-service record lives in its config directory, and the service had been started under a different config directory from the one the user's shell reads.** The two halves could not see each other, so one held the port and the other believed nothing was running. Fixed 2026-10-20 by stopping the server and restarting it from a clean login environment with `opencode service start`, so the record now lives in `~/.config/opencode/`.
 
    **Rule:** start the managed service from an ordinary login shell. A service started inside another tool's environment will take the port and be invisible to the user's CLI.
@@ -133,6 +135,12 @@ Chalaak was invoked through OpenCode against the local Ollama model. Unlike the 
 4. **OpenCode falls back to a hosted model when its configuration is not loaded.** Invoked from an environment with a different `OPENCODE_CONFIG_DIR` and a malformed `OPENCODE_CONFIG_CONTENT`, OpenCode logged `rejected malformed JSON or JSONC document`, lost the `ollama` provider, and answered in 2 s on `opencode/minimax-m3.1-flash-free` — work leaving the machine, contrary to the local-first strategy and to the privacy rule in the approved workflow specification. It did so silently; nothing in the reply indicated the model had changed.
 
    The `cto` adapter now also pins `model: "ollama/qwen3.5:9b"`, but **the pin is not a safeguard on its own** — it resolves only where the `ollama` provider is configured, which is precisely what fails in this scenario. **The only reliable check is the model name OpenCode prints in its run header. If it is not `qwen3.5:9b`, the work did not stay local.**
+
+5. **A locally installed runtime can report itself broken purely because of the environment it was invoked from.** Asked for its version from inside the same environment described in finding 4, Hermes answered `no dependency environment is committed for this install; run hermes pm repair`. Asked from an ordinary login shell seconds later, the same install answered **`v0.22.2 · stable · up to date`**. The install was never damaged.
+
+   This was briefly recorded as a defect in a baseline evidence capture before being caught and corrected. It is the same root cause as findings 3 and 4 — overridden configuration — presenting as a third symptom.
+
+   **Rule:** a claim that a local runtime is broken is not admissible unless it was reproduced from an ordinary login shell. Automated inspection run from inside another tool's environment may report false failures, and they look exactly like real ones.
 
 ## Status
 
