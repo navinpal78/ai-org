@@ -5,8 +5,8 @@ identity.
 
 | Runtime | State | Purpose |
 |---|---|---|
-| OpenCode | CURRENT / DEVELOPMENT | Current implementation used to develop and test the CEO |
-| Hermes | RETIRED | Previously evaluated; not a current dependency |
+| OpenCode | CURRENT / CTO & TECHNICAL | Established runtime for CTO and technical work |
+| Hermes | CURRENT / CEO | Active CEO runtime |
 
 ## Runtime Independence
 

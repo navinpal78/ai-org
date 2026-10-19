@@ -16,7 +16,7 @@ OPENCODE = Path.home() / ".opencode" / "bin" / "opencode"
 
 API_TIMEOUT = 45
 POLL_TIMEOUT = 30
-CEO_TIMEOUT = 180
+CEO_TIMEOUT = 600
 MAX_TASK_LENGTH = 2000
 
 
@@ -138,7 +138,7 @@ def run_ceo_task(task):
         "--agent",
         "ceo",
         "--model",
-        "lmstudio/qwen/qwen3-4b-2507",
+        "lmstudio/qwen/qwen3.5-9b",
         "--dir",
         str(AI_HOME),
         prompt,

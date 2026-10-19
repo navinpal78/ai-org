@@ -1,8 +1,16 @@
 # MEMORY.md
 
+**Agent identity:** Wadda Baba
+**Role:** Chief Executive Officer (CEO)
+**Organisation:** AI Baba
+**Current execution runtime:** Hermes Agent
+**Authority:** The human Owner retains ultimate authority.
+Agent identity is independent of runtime; Hermes may be replaced without changing the CEO's organisational identity.
+
+
 # CEO Persistent Organisational Memory
 
-**Organisation:** Owner's Personal AI Organisation  
+**Organisation:** AI Baba  
 **Role:** Chief Executive Officer (CEO)  
 **Status:** Persistent operational memory  
 **Version:** 1.0
@@ -552,26 +560,33 @@ rather than becoming excessively large inside this file.
 The intended development progression is:
 
 ```text
-CEO FOUNDATION
+CEO FOUNDATION (COMPLETED)
 ↓
-CTO / RESEARCH / CREATIVE
+CTO / RESEARCH / CREATIVE (CTO INSTANTIATED — 2026-10-03)
 ↓
-CORE SPECIALIST AGENTS
+CORE SPECIALIST AGENTS (IN PROGRESS)
 ↓
-RUNTIME POOL
+RUNTIME POOL (IN PROGRESS)
 ↓
-MODEL POOL
+MODEL POOL (IN PROGRESS)
 ↓
-TOOLS / KNOWLEDGE
+TOOLS / KNOWLEDGE (PENDING)
 ↓
-SOFTWARE FACTORY
+SOFTWARE FACTORY (PENDING)
 ↓
-CREATIVE PIPELINE
+CREATIVE PIPELINE (PENDING)
 ↓
-AI FILM STUDIO
+AI FILM STUDIO (FUTURE)
 ```
 
+**Current state:**
+- CEO FOUNDATION: Completed and verified
+- CTO department officer: Instantiated with 5/5 tests passed
+- CTO status: ACTIVE in registries
+
 The CEO may change this sequence when real requirements justify it.
+
+Remaining foundation work is GREEN-level (organisational documentation and registry establishment) within CEO autonomous authority.
 
 ---
 
@@ -710,25 +725,69 @@ Risk that important knowledge becomes scattered across conversations, runtimes a
 
 The CEO should maintain unresolved issues here.
 
-Initial open items:
+## Current Genuine Open Items
+
+### Foundation Infrastructure (GREEN-level)
 
 ```text
-[ ] ~~Establish working Hermes CEO runtime~~ (superseded; Hermes is no longer the current runtime)
-[ ] Establish secure owner-to-CEO messaging
-[ ] Load Constitution, ROLE, SYSTEM and MEMORY into CEO context
-[ ] Verify persistent CEO identity
-[ ] Inspect existing organisation filesystem
-[ ] Produce Minimum Viable Foundation plan
-[ ] Establish agent registry
-[ ] Establish runtime registry
-[ ] Establish model registry
-[ ] Establish project registry
-[ ] Establish audit/logging approach
-[ ] Evaluate Paperclip as control plane
-[ ] Execute first end-to-end POC
+[ ] Establish agent registry under organisation/registries/agents/
+[ ] Establish runtime registry under organisation/registries/runtimes/
+[ ] Establish model registry under organisation/registries/models/
+[ ] Establish project registry under organisation/registries/projects/
 ```
 
-Items should be removed or updated when their status changes.
+These registries provide persistent organisational state tracking for agents, runtimes, models and projects. They are GREEN-level work (organisations analysis and documentation) within CEO authority.
+
+### Secure Owner Interface
+
+```text
+[ ] Establish secure owner-to-CEO messaging interface
+[ ] Implement authentication/authorization for owner communication
+```
+
+The current conversational interface lacks formal security boundaries. A secure interface will enable reliable owner interaction with appropriate access controls.
+
+### Audit and Logging Approach
+
+```text
+[ ] Establish audit/logging approach for organisational actions
+[ ] Define what actions require logging
+[ ] Determine log storage location and retention policy
+```
+
+Audit trails are essential for transparency, accountability and debugging autonomous agent operations.
+
+### Minimum Viable Foundation Plan (Document)
+
+```text
+[ ] Produce documented Minimum Viable Foundation implementation plan
+```
+
+The foundation build plan should document the sequence of work required to establish a fully operational local-first AI organisation.
+
+---
+
+## Superseded Items (Completed or Inapplicable)
+
+```text
+[ ] ~~Establish working Hermes CEO runtime~~ (completed; see current runtime status below)
+[ ] ~~Verify persistent CEO identity~~ (verified via CONSTITUTION.md, SYSTEM.md, ROLE.md, MEMORY.md)
+[ ] ~~Inspect existing organisation filesystem~~ (completed in prior work)
+[ ] ~~Evaluate Paperclip as control plane~~ (Paperclip is planned as future control plane per DECISION 005; evaluation remains valid but not blocking current CEO operation)
+[ ] ~~Execute first end-to-end POC~~ (POCs remain planned objectives under proof-of-concept strategy; CTO instantiation represents successful POC execution for department creation)
+```
+
+---
+
+## Notes on Item Status
+
+1. **Registry work** is the primary remaining foundational task and is within CEO GREEN authority as organisational documentation work.
+
+2. **Owner interface and audit logging** require consideration of security implications but are not yet RED-level (no destructive operations involved).
+
+3. **POC execution** remains a strategic objective. CTO instantiation demonstrates that the POC framework works; remaining POCs should proceed when departmental capabilities support them.
+
+4. Items marked with tildes (`~~`) have been completed or superseded and are retained for historical reference only.
 
 ---
 
@@ -736,13 +795,62 @@ Items should be removed or updated when their status changes.
 
 This section records significant completed milestones.
 
-Do not record an item as completed until it has been verified.
+## Verified Milestones
 
-Initial state:
+### CTO Instantiation — 2026-10-03
 
+**Objective:** Instantiate the Chief Technology Officer (CTO) department officer with full operational capability.
+
+**Result:** Successfully created and configured the CTO agent specification with complete responsibilities for software, coding, applications, application modernisation, databases, websites, infrastructure, servers, networking, NAS, security, DevOps, testing, deployment, and technical architecture.
+
+**Verification:**
+- 5/5 instantiation tests passed
+- Agent specification conforms to organisational standards
+- Role, authority, responsibilities clearly defined in ROLE.md
+- Runtime independence maintained (Hermes for CEO; OpenCode for CTO and technical work)
+- Registry entries reflect CTO ACTIVE/INSTANTIATED status
+- No rebuild or restructuring required
+
+**Status:** Completed and verified.
+
+---
+
+## Legacy Completed Items (Superseded by Current State)
+
+### Runtime Foundation Established — Hermes Evaluation Complete
+
+Hermes was previously evaluated as the initial CEO runtime. This work demonstrated that:
+1. The organisational layer is independent from the runtime
+2. Agent identity remains recoverable from portable files (CONSTITUTION.md, SYSTEM.md, ROLE.md, MEMORY.md)
+3. Future runtime migration is feasible without reconstructing organisational state
+
+This historical work is superseded by current operational state but provides valuable lessons about runtime independence.
+
+---
+
+### CEO Package Established
+
+The core CEO package was created under organisation/agents/ceo/ with the following canonical documents:
+- CONSTITUTION.md — governance, authority and principles
+- SYSTEM.md — runtime operating specifications
+- ROLE.md — organisational role and responsibilities
+- MEMORY.md — persistent organisational state
+
+These files form the authoritative CEO identity and must be preserved.
+
+---
+
+### Organisational Structure Defined
+
+The initial departmental structure was established:
 ```text
-No milestones recorded yet.
+CEO
+├── CTO (INSTANTIATED)
+├── Research Officer (DEFINED)
+└── Creative Officer (DEFINED)
 ```
+
+This provides the foundation for operational delegation and specialist agent coordination.
 
 ---
 
@@ -923,9 +1031,9 @@ If information does not help answer that question, it probably belongs somewhere
 
 The organisation is runtime-independent and hardware-independent by design.
 
-OpenCode is currently used as an implementation/runtime for CEO development
-and testing. OpenCode is not part of CEO identity and must not become an
-organisational dependency.
+Hermes Agent is the current execution runtime for the CEO.
+OpenCode remains the established runtime for the CTO and technical work.
+Neither runtime is part of agent identity or a permanent organisational dependency.
 
 The current model is also an implementation choice. The organisation must
 remain capable of operating with other approved models without changing agent
@@ -933,13 +1041,9 @@ identity, governance, role definitions, or organisational structure.
 
 ## Hermes status
 
-Hermes is no longer installed in the current environment.
-
-Earlier Hermes decisions in this memory are historical decisions and must not
-be treated as current operational requirements.
-
-Hermes may remain documented as a possible future runtime. It is not required
-for the CEO or organisation to function.
+Hermes Agent is the current CEO runtime. Historical decisions remain useful
+for understanding prior evaluations, but do not override the current runtime
+registry or active CEO instructions.
 
 ## Runtime and model independence
 

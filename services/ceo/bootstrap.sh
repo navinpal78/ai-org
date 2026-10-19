@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -u
 
-AI_HOME="/home/dell/AI"
+AI_HOME="/home/baba/AI"
 CEO_HOME="$AI_HOME/organisation/agents/ceo"
 LOG_DIR="$AI_HOME/logs/ceo"
 STATUS_FILE="$LOG_DIR/status"
@@ -71,14 +71,16 @@ log "Organisation registries: OK"
 # Runtime
 # ------------------------------------------------------------
 
-OPENCODE="$HOME/.opencode/bin/opencode"
+HERMES="$(command -v hermes || true)"
 
-[ -x "$OPENCODE" ] || fail "OpenCode executable missing: $OPENCODE"
+[ -n "$HERMES" ] || fail "Hermes executable not found in PATH"
+[ -x "$HERMES" ] || fail "Hermes executable is not executable: $HERMES"
 
-OPENCODE_VERSION="$("$OPENCODE" --version 2>&1)" || \
-    fail "OpenCode failed version check"
+HERMES_VERSION="$("$HERMES" --version 2>&1)" || \
+    fail "Hermes failed version check"
 
-log "OpenCode: $OPENCODE_VERSION"
+log "Hermes CEO runtime: $HERMES_VERSION"
+log "OpenCode remains the CTO/technical runtime; it is not checked here."
 
 # ------------------------------------------------------------
 # Basic environment
@@ -124,7 +126,7 @@ READY
 timestamp=$(timestamp)
 hostname=$(hostname)
 user=$(whoami)
-opencode=$OPENCODE_VERSION
+hermes=$HERMES_VERSION
 python=$PYTHON_VERSION
 node=$NODE_VERSION
 STATUS

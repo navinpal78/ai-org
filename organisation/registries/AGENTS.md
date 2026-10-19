@@ -1,9 +1,9 @@
 # Agent Registry
 
 | Agent | Definition | State | Runtime | Model |
-|---|---|---|---|---|
-| CEO | agents/ceo/ | ACTIVE / DEVELOPMENT | OpenCode | Current approved model |
-| CTO | agents/cto/ROLE.md | DEFINED | None | None |
+|---|---|-------|---------|-------|
+| CEO | agents/ceo/ | ACTIVE | Hermes Agent | Current approved model |
+| CTO | agents/cto/ | INSTANTIATED / ACTIVE | OpenCode | qwen3.5:9b (served by Ollama, local) |
 
 No other specialist agent is currently instantiated.
 
