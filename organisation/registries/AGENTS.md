@@ -3,7 +3,7 @@
 | Agent | Definition | State | Runtime | Model |
 |---|---|-------|---------|-------|
 | CEO | agents/ceo/ | ACTIVE | Hermes Agent | Current approved model |
-| CEO (local) | agents/ceo-local/ | INSTANTIATED / PENDING FIRST RUN | OpenCode | qwen3.5:9b (served by Ollama, local) |
+| CEO (local) | agents/ceo-local/ | INSTANTIATED / ACTIVE | OpenCode | qwen3.5:9b (served by Ollama, local) |
 | CTO | agents/cto/ | INSTANTIATED / ACTIVE | OpenCode | qwen3.5:9b (served by Ollama, local) |
 
 No other specialist agent is currently instantiated.
@@ -35,11 +35,26 @@ including the CTO. Both were found by direct test, not inspection.
 | # | Fault | Status |
 |---|---|---|
 | 1 | `opencode.service` ran `opencode serve --service` on the managed-service port, but the CLI did not recognise it (`opencode service status` → `stopped`). Every `opencode run` then died with "port 49374 already in use". | **Fixed** — unit stopped and disabled. The CLI starts and owns its own managed service on demand, on the same port, so the web UI is unaffected. |
-| 2 | `paperclipai.service` inherits only the systemd default `PATH`, which excludes `~/.opencode/bin`. Agent runs fail with `Command not found in PATH: "opencode"`. | **Fix staged, not yet applied** — drop-in written at `~/.config/systemd/user/paperclipai.service.d/10-agent-runtime-path.conf` and loaded by `daemon-reload`. It takes effect on the next restart of `paperclipai` or at next boot. |
+| 2 | `paperclipai.service` inherits only the systemd default `PATH`, which excludes `~/.opencode/bin`. Agent runs fail with `Command not found in PATH: "opencode"`. | **Fixed 2026-10-20 02:46 UTC** — drop-in at `~/.config/systemd/user/paperclipai.service.d/10-agent-runtime-path.conf`, applied when the owner restarted `paperclipai`. Verified: the live unit `PATH` now begins with `/home/baba/.opencode/bin`. |
+| 3 | A run attempt that dies leaves its `opencode serve --service` process orphaned (reparented to `systemd`, still holding port 49374). The CLI does not track adapter-spawned servers, so `opencode service status` reports `stopped` and `opencode service stop` is a no-op. Every later attempt spawns a fresh server, collides, and leaks another orphan — a self-sustaining cascade. | **Cleared, but can recur.** Remedy is `pkill -f 'opencode serve'`, then re-queue the task. Note this is the true cause of fault 1; the `opencode.service` unit was only one way of triggering it. Starting a server manually triggers it too. |
+| 4 | `qwen3.5:9b` could not close its own task loop even though it had a working `shell` tool. It used `shell` once (`ollama ps`), then hallucinated a `tools.paperclip.comment_issue(...)` namespace inside the `execute` JS evaluator, called it with Python kwarg syntax, and concluded *"Cannot execute shell commands directly"* — which was false. It asked for manual intervention instead. | **Fixed by prompt.** Sarpanch's instructions now name `shell` explicitly, state that `execute` is a JS evaluator with no `fetch`/`process`/`tools.paperclip`, and give the literal `curl` commands for posting a comment and PATCHing status with `statusVersion`. PIN-5 then self-closed on the next run. |
 
-Fault 2 cannot be worked around from inside an agent: Paperclip refuses to let agent API keys
+Fault 2 could not be worked around from inside an agent: Paperclip refuses to let agent API keys
 set the host-executed adapter settings `command`, `env` or `cwd`, and no directory on the
-service `PATH` is user-writable.
+service `PATH` is user-writable. It needed the owner to restart the host service.
+
+Fault 4 is the important one for anyone adding local agents. A small local model will not
+discover its own capabilities by reasoning about them; stating a principle like "close your own
+loop" is not enough. Give it the exact command. The runtime was never the limitation here.
+
+## Hermes — second free runtime (PIN-4, 2026-10-20)
+
+`~/.hermes/config.yaml` points at local Ollama (`ollama-local` → `127.0.0.1:11434`, default
+`qwen3.5:9b`, no paid credentials). The install was missing its committed dependency
+environment; `hermes pm repair` was run at the owner's instruction and completed successfully
+("dependency environment repaired"). `hermes-gateway.service` is still running the pre-repair
+environment and needs a restart to pick it up. Paperclip's `hermes_local` adapter does not
+document a local-provider option, so Hermes is not yet wired to a Paperclip agent.
 
 ## State Definitions
 
