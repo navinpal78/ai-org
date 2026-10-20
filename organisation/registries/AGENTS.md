@@ -47,14 +47,66 @@ Fault 4 is the important one for anyone adding local agents. A small local model
 discover its own capabilities by reasoning about them; stating a principle like "close your own
 loop" is not enough. Give it the exact command. The runtime was never the limitation here.
 
+### Fault 4 fix applied to the CTO, 2026-10-20
+
+The same prompt fix was applied to Chalaak, and a **second, independent cause** was found while
+applying it: Chalaak's adapter config carried `dangerouslySkipPermissions: false`. For
+`opencode_local` this field defaults to `true` for unattended runs; set to `false` it leaves the
+run waiting on approval prompts that nobody can answer headlessly. So the CTO had both no
+mechanism *and* no permission. Instructions alone would not have fixed it.
+
+Both were changed: the instructions now carry the `shell`/`execute` section and the literal
+`curl` commands, and `dangerouslySkipPermissions` is `true`. This widens the CTO's filesystem
+and shell reach to match the CEO's; revert with a PATCH to `/api/agents/<id>` setting it back to
+`false`, at the cost of the CTO again being unable to record its own work.
+
+Verified by PIN-6, not assumed: Chalaak posted its own findings (`qwen3.5:9b`, `hostname` =
+`aipind`) and set the issue to `done` itself, 2026-10-20 03:31 UTC. It omitted the memory figure
+the task asked for — the same over-literal template-following seen in Sarpanch's
+`$PAPERCLIP_RUN_ID` slip. Expect small local models to drop details, not to invent them.
+
 ## Hermes — second free runtime (PIN-4, 2026-10-20)
 
-`~/.hermes/config.yaml` points at local Ollama (`ollama-local` → `127.0.0.1:11434`, default
-`qwen3.5:9b`, no paid credentials). The install was missing its committed dependency
-environment; `hermes pm repair` was run at the owner's instruction and completed successfully
-("dependency environment repaired"). `hermes-gateway.service` is still running the pre-repair
-environment and needs a restart to pick it up. Paperclip's `hermes_local` adapter does not
-document a local-provider option, so Hermes is not yet wired to a Paperclip agent.
+`~/.hermes/config.yaml` points at local Ollama: `model.provider: custom`, `model.base_url:
+http://127.0.0.1:11434/v1`, `model.default: qwen3.5:9b`, plus a named `providers.ollama-local`
+entry. No paid credentials are configured in it; `auth.json` has no providers.
+
+`hermes-gateway.service` was restarted onto the repaired environment 2026-10-20 11:22 +08 at the
+owner's instruction. Nothing was lost: the gateway logged "No messaging platforms enabled" both
+before and after, so no messaging connections existed to drop.
+
+**Verified working, 2026-10-20.** With `HERMES_HOME=/home/baba/.hermes` set, `hermes status`
+reports `Model: qwen3.5:9b`, `Provider: custom`, `Providers: ollama-local`, and a one-shot
+`hermes -z "..." --yolo chat` completed a real tool call. Its terminal tool runs **locally** —
+it returned `hostname` = `aipind` and reached the Paperclip API on `127.0.0.1:3100` (HTTP 401
+without a key, which is the correct response). So a Hermes-backed Paperclip agent could close
+its own loop the same way Sarpanch and Chalaak now do.
+
+**The trap, and it is a costly one.** Paperclip agent runs execute with `HOME` set to a
+per-run sandbox (`/tmp/paperclip-ai-.../`), so `~/.hermes` does not resolve to the real config.
+`hermes doctor` then reports *"config.yaml not found (using defaults)"* and *"~/.hermes/.env
+file missing"*, and Hermes auto-detects a provider from the environment instead. In a Paperclip
+run that environment contains `ANTHROPIC_API_KEY`, so Hermes silently routed to **Anthropic** —
+an agent configured as "free" would have billed a paid key. Observed directly: `hermes status`
+showed `Provider: Anthropic`, `Model: (not set)`.
+
+This also explains an earlier wrong conclusion recorded against this install. `hermes pm repair`
+appearing not to "hold" between runs was not a Hermes fault — each sandboxed run gets a fresh
+`HOME` and restages its runtime venv there. The repair did hold for the real home.
+
+Wiring Hermes to a Paperclip agent therefore needs, at minimum:
+
+- `adapterConfig.env = {"HERMES_HOME": "/home/baba/.hermes"}` — **mandatory**, not optional;
+  without it the agent is neither local nor free.
+- `model` and `provider` left blank so Hermes uses its own configured default. The adapter's
+  documented `provider` list (auto, openrouter, nous, openai-codex, zai, kimi-coding, minimax,
+  minimax-cn) has no `custom`/local value, so naming one is not possible — omission is the route.
+- a `--yolo` equivalent via `extraArgs`, and `toolsets` including `terminal`, for headless runs.
+
+**Open blocker:** `env` is one of the host-executed adapter settings (`command`, `env`, `cwd`)
+that Paperclip refuses to let an agent API key set — the same restriction that blocked fault 2.
+Creating a Hermes-backed agent needs the owner or board to set `env`, or it will run against
+Anthropic. Until then Hermes is a proven free runtime but not a wired one.
 
 ## State Definitions
 
