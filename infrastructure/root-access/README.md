@@ -42,15 +42,29 @@ installer's default when you accept the LVM layout without dragging the size sli
 
 It is reclaimable online, with no downtime and no unmount, because ext4 grows live.
 
-### Do not use `+100%FREE`
-
-An earlier draft of this file recommended `-l +100%FREE`. **That advice was
-incomplete and is superseded.** Take what you need and leave the rest unallocated:
+### DONE — extended to 400 GB by the Founder, 2026-10-20 10:12
 
 ```bash
 sudo lvextend -L 400G /dev/ubuntu-vg/ubuntu-lv
 sudo resize2fs  /dev/ubuntu-vg/ubuntu-lv
 ```
+
+Verified immediately after:
+
+```
+lvs  →  ubuntu-lv   LSize 400.00g   -wi-ao----
+vgs  →  ubuntu-vg   VSize <950.82g  VFree <550.82g
+df / →  394G size, 33G used, 345G avail, 9% used
+```
+
+Online, no downtime, no unmount — Paperclip kept serving on 3100 throughout.
+~550 GB of extents remain unallocated, so `lvcreate --snapshot` is still possible.
+The rest of this section is retained as the reasoning behind the 400 GB figure.
+
+### Do not use `+100%FREE`
+
+An earlier draft of this file recommended `-l +100%FREE`. **That advice was
+incomplete and is superseded.** Take what you need and leave the rest unallocated.
 
 Two independent reasons, both specific to this box:
 
@@ -73,7 +87,7 @@ headroom than the workload needs on either axis.
 path, so a rule permitting it permits it against *any* volume. This is a one-time
 Founder action, not an agent capability.
 
-Worth doing before it bites: 61 GB free, Ollama models are 5–7 GB each, and
+Why it was worth doing before it bit: only 61 GB was free, Ollama models are 5–7 GB each, and
 Paperclip carries an embedded Postgres whose data directory only grows.
 
 ### Independently corroborated at the block layer, 2026-10-20 10:03
