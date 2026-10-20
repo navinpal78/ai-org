@@ -4,11 +4,19 @@
 **Answers:** *"how to ensure that I can access Paperclip & all the agents in it after every
 reboot, remotely, as the aiserver is running headless"*
 
-> **Amendment 2 — 2026-10-20 08:00.** Boot persistence is solved, but **crash
-> persistence is not.** Paperclip is right now a foreground process inside one
-> SSH login shell, and it dies the moment that shell closes. See
-> [Amendment 2](#amendment-2--the-control-plane-is-living-in-an-ssh-window)
-> at the bottom. Fix: [`paperclip-cutover.sh`](paperclip-cutover.sh).
+> **Amendment 3 — 2026-10-20 10:12. THE CUTOVER IS DONE.** Paperclip now runs as
+> `paperclipai.service` under `systemd --user`, from a managed install, pinned to
+> 2026.1012.0. It is no longer a foreground job in an SSH window and no longer
+> runs out of an npx cache. Amendment 2 below describes the problem that this
+> solved; it is retained as history, not as current state. See
+> [Amendment 3](#amendment-3--cutover-complete-and-the-one-thing-it-left-behind).
+>
+> <details><summary>Superseded: Amendment 2 — 2026-10-20 08:00</summary>
+>
+> Boot persistence is solved, but **crash persistence is not.** Paperclip is right
+> now a foreground process inside one SSH login shell, and it dies the moment that
+> shell closes. Fix: [`paperclip-cutover.sh`](paperclip-cutover.sh).
+> </details>
 
 ---
 
@@ -75,7 +83,7 @@ answered correctly on the local model in 36 s.
 |---|---|
 | `opencode.service` | **Yes** — started under systemd and used end-to-end |
 | `hermes-gateway.service` | Enabled; it was already running and was not restarted |
-| `paperclip.service` | **Not fully tested.** Testing means stopping the Paperclip instance that is currently running the session doing this work. `npx --yes paperclipai --version` resolves (2026.1012.0), so the command is valid, but the unit has not been exercised as a full `run`. |
+| `paperclip.service` | **Superseded 2026-10-20 10:12** by `paperclipai.service`, which *is* verified: active, enabled, serving 3100 with HTTP 200, parented to `systemd(1)`. The legacy unit was never exercised as a full `run` and now never will be — it is stopped and disabled, retained only as the rollback path. See [Amendment 3](#amendment-3--cutover-complete-and-the-one-thing-it-left-behind). |
 
 **Confirm the Paperclip unit on your next reboot.** If it does not come up:
 
@@ -290,3 +298,91 @@ Once you trust the new unit, delete the old file:
 ```bash
 rm ~/.config/systemd/user/paperclip.service && systemctl --user daemon-reload
 ```
+
+---
+
+## Amendment 3 — cutover complete, and the one thing it left behind
+
+**Added 2026-10-20 10:20, after the Founder ran the cutover.**
+
+### It worked, first time, in 30 seconds
+
+Ran 10:12:17, success block printed 10:12:47. Verified post-state:
+
+```
+paperclipai.service   active / enabled      pid 141169, parent systemd(1669)
+binary                /home/baba/.local/bin/paperclipai  -> .paperclip/cli/installs/npm/2026.1012.0
+health on :3100       HTTP 200,  serverVersion 2026.1012.0
+default.target.wants  hermes-gateway, opencode, paperclipai
+```
+
+The parent chain is the whole point. It used to end in `sshd`; it now ends in
+`systemd(1)`. The process ancestry of this very agent run traces to pid 1, not to
+a login shell. Version is unchanged at 2026.1012.0 — the install moved without
+also upgrading, which was the reason for pinning.
+
+### The thing it left behind: a silent crash loop
+
+At **10:12:48 — one second after the script printed its success block** — the old
+`paperclip.service` was started by hand. Almost certainly the fallback line from
+the agent's own briefing, `systemctl --user start paperclip`, run as a precaution
+rather than as a response to a failure.
+
+It cannot work, and it does not stop trying:
+
+```
+Oct 20 10:13:47 npx[141627]: Paperclip instance 'default' is already running as
+                             paperclipai.service. Use ... --force to bypass.
+Oct 20 10:13:47 paperclip.service: Main process exited, status=1/FAILURE
+Oct 20 10:13:47 paperclip.service: Consumed 1.818s CPU, 289.1M memory peak.
+```
+
+Five restarts in 70 seconds, and it would have continued indefinitely:
+the unit sets `StartLimitIntervalSec=0` with `Restart=always`, so systemd's
+usual give-up rule is switched off. Roughly 290 MB peak and 1.8 s of CPU every
+ten seconds, forever, on a 15 GiB box.
+
+**Two things kept this from being serious.** The unit was already `disabled`, so
+it would not have returned at boot. And Paperclip's own CLI refuses to start a
+second instance of `default` — that safety check, not our configuration, is what
+prevented two control planes fighting over port 3100.
+
+Stopped 10:19 with `systemctl --user stop paperclip`. The unit file is retained
+deliberately: it is still the documented rollback, and `rollback()` in the
+cutover script depends on it existing.
+
+### The fallback instruction was wrong, and is corrected here
+
+`systemctl --user start paperclip` was given without a precondition. Running it
+when the cutover has *succeeded* starts the crash loop above. It is a recovery
+action, not a reassurance action. Check first, and only act on a failure:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3100/   # expect 200
+systemctl --user is-active paperclipai.service                    # expect active
+```
+
+If and only if that is **not** 200 and **not** active:
+
+```bash
+systemctl --user start paperclip      # legacy npx unit, emergency use only
+```
+
+If the loop ever reappears — `systemctl --user is-active paperclip` returning
+`activating` — the fix is `systemctl --user stop paperclip`. It is safe: that
+unit is not serving anything, and port 3100 belongs to a different unit.
+
+### Post-cutover checklist (final)
+
+```bash
+systemctl is-active ollama snap.tailscale.tailscaled.service ssh.socket
+systemctl --user is-active hermes-gateway opencode paperclipai   # expect: active x3
+systemctl --user is-active paperclip                             # expect: inactive
+systemctl --user is-enabled paperclip                            # expect: disabled
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3100/  # expect: 200
+```
+
+`systemctl --user` needs a session bus. From a non-login context, export
+`XDG_RUNTIME_DIR=/run/user/1000` first, or every one of those returns
+`Failed to connect to user scope bus` rather than a real answer — which reads
+exactly like a broken service and is not one.
