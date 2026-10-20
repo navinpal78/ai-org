@@ -26,11 +26,25 @@ configuration as of 2026-10-20 **plus** the `OLLAMA_KEEP_ALIVE=30m` line.
 **It is not installed.** Writing to `/etc/systemd/system/` requires root, and
 the CEO runs without passwordless sudo. The Founder must apply it.
 
-An equivalent effect is being held in place at runtime by loading the model
-with an explicit `keep_alive`, but that lasts only until Ollama restarts and
-has to be re-applied by hand. The systemd change is the durable fix.
+An equivalent effect was being held in place at runtime by loading the model
+with an explicit `keep_alive`. **That has already lapsed** — checked
+2026-10-20 08:00, `ollama ps` is empty and the live unit environment still has
+no `OLLAMA_KEEP_ALIVE`, so every task is paying the cold reload again. This is
+exactly why the runtime hack was never the answer: it does not survive, and it
+expires quietly. The systemd change is the durable fix.
 
 ## Install (requires root)
+
+**Preferred, as of 2026-10-20:** this is now step 1 of
+[`../root-access/grant-scoped-root.sh`](../root-access/grant-scoped-root.sh),
+which applies it with a backup and a verification step, and also installs the
+scoped sudo list the Founder approved:
+
+```bash
+sudo bash /home/baba/AI/infrastructure/root-access/grant-scoped-root.sh
+```
+
+The equivalent by hand:
 
 ```bash
 sudo install -m 644 -o root -g root \

@@ -4,6 +4,12 @@
 **Answers:** *"how to ensure that I can access Paperclip & all the agents in it after every
 reboot, remotely, as the aiserver is running headless"*
 
+> **Amendment 2 — 2026-10-20 08:00.** Boot persistence is solved, but **crash
+> persistence is not.** Paperclip is right now a foreground process inside one
+> SSH login shell, and it dies the moment that shell closes. See
+> [Amendment 2](#amendment-2--the-control-plane-is-living-in-an-ssh-window)
+> at the bottom. Fix: [`paperclip-cutover.sh`](paperclip-cutover.sh).
+
 ---
 
 ## Short answer
@@ -164,3 +170,112 @@ systemctl --user daemon-reload
 
 `hermes-gateway.service` was not created by this work — only enabled. Disabling it returns it
 to how it was.
+
+---
+
+## Amendment 2 — the control plane is living in an SSH window
+
+**Added 2026-10-20 08:00, after the Founder approved the vendor-service cutover.**
+
+### What the earlier version of this document missed
+
+It checked that `paperclip.service` was *enabled*. It did not check whether it was
+*running*. It is not:
+
+```
+systemctl --user is-enabled paperclip   ->  enabled
+systemctl --user is-active  paperclip   ->  inactive
+```
+
+Port 3100 is served by a different process entirely. Its ancestry:
+
+```
+sshd-session: baba [priv]
+  └─ sshd-session: baba@pts/4
+      └─ -bash
+          └─ npm exec paperclipai run
+              └─ node /home/baba/.npm/_npx/43414d9b790239bb/.../paperclipai run   (pid 55438)
+```
+
+**Paperclip is a foreground job in an interactive login shell.** When that SSH
+session ends — you close the window, the laptop sleeps, the Wi-Fi drops — the
+shell sends `SIGHUP` to its job and the entire control plane dies, taking every
+running agent with it. `Linger=yes` does not help; lingering keeps *user
+services* alive, and this is not a service.
+
+This is strictly worse than the reboot problem that Amendment 1 fixed, because a
+reboot is something you choose and a dropped connection is not. On a headless box
+you reach only over the network, the failure also removes your means of noticing.
+
+**Until the cutover is run, treat the pts/4 SSH session as load-bearing. Do not
+close it.**
+
+### The second problem: it is installed in a temp directory
+
+```
+which paperclipai
+/home/baba/.npm/_npx/43414d9b790239bb/node_modules/.bin/paperclipai
+```
+
+That is an npx cache directory. `npm cache clean`, or ordinary cache eviction,
+can remove it. And `paperclip.service`'s `ExecStart` is `npx --yes paperclipai
+run`, which means that after a reboot with a cold cache systemd would **silently
+fetch whatever version is newest on npm** and run your company on it. Pinning is
+not optional for a control plane.
+
+### Two units that do not collide — which is the danger
+
+Paperclip ships its own service manager:
+
+```
+paperclipai service install | start | stop | restart | status | logs
+```
+
+The unit it installs is called **`paperclipai.service`**. The hand-rolled one is
+**`paperclip.service`**. Different names, so systemd sees no conflict and will
+happily enable both — and then **both start at boot and race for port 3100.**
+Anyone installing the official service must disable the hand-rolled one in the
+same breath. The cutover script does exactly that.
+
+The vendor unit is also better on its own merits: `service restart` hot-restarts
+while **preserving active agent runs**. The hand-rolled unit only knows
+`SIGTERM`, which kills an agent mid-task.
+
+### The fix: `paperclip-cutover.sh`
+
+```bash
+bash /home/baba/AI/infrastructure/boot-and-remote-access/paperclip-cutover.sh
+```
+
+**Run it yourself from an SSH shell — not as a Paperclip task.** Step 3 stops the
+control plane, which would kill the agent running the script halfway through. The
+script refuses to run if it detects `PAPERCLIP_RUN_ID`, for that reason.
+
+What it does, in order:
+
+1. `paperclipai install` into the managed per-user store, **pinned to 2026.1012.0** —
+   the version running today. Relocating the install and upgrading it are two
+   separate risks and the script deliberately does not take them together.
+2. Disables `paperclip.service`, so the two units cannot race at boot. The unit
+   file stays on disk, so rollback remains one command.
+3. Stops the control plane. **Paperclip is down from here — about a minute.**
+4. `paperclipai service install --enable-linger`.
+5. Verifies: health 200 on :3100, and `paperclipai.service` both enabled and active.
+
+Any failure rolls back automatically to the setup that works today, and tells you
+what to do if even that fails. Full transcript at `logs/paperclip-cutover-*.log`.
+
+### Post-cutover checklist (replaces the one above)
+
+```bash
+systemctl is-active ollama snap.tailscale.tailscaled.service ssh.socket
+systemctl --user is-active hermes-gateway opencode paperclipai   # note the new name
+systemctl --user is-enabled paperclip                            # expect: disabled
+ss -lntp | grep -E '11434|49374|3100'
+```
+
+Once you trust the new unit, delete the old file:
+
+```bash
+rm ~/.config/systemd/user/paperclip.service && systemctl --user daemon-reload
+```
