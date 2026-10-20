@@ -40,12 +40,34 @@ df / →  98G size, 33G used, 61G avail, ext4
 left the remaining ~850 GB as *unallocated extents* in the volume group — the Ubuntu
 installer's default when you accept the LVM layout without dragging the size slider.
 
-It is reclaimable online, with no downtime and no unmount, because ext4 grows live:
+It is reclaimable online, with no downtime and no unmount, because ext4 grows live.
+
+### Do not use `+100%FREE`
+
+An earlier draft of this file recommended `-l +100%FREE`. **That advice was
+incomplete and is superseded.** Take what you need and leave the rest unallocated:
 
 ```bash
-sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
-sudo resize2fs /dev/ubuntu-vg/ubuntu-lv
+sudo lvextend -L 400G /dev/ubuntu-vg/ubuntu-lv
+sudo resize2fs  /dev/ubuntu-vg/ubuntu-lv
 ```
+
+Two independent reasons, both specific to this box:
+
+1. **The asymmetry.** Growing ext4 is online and routine; you can run the pair
+   above again at any time. *Shrinking* is not — ext4 cannot shrink mounted, so
+   reversing an over-extend on the root volume means booting a live USB. Taking
+   less is a decision you can revisit; taking everything is not.
+
+2. **Free extents are this machine's only undo button.** An LVM snapshot of the
+   root LV needs unallocated extents in the volume group to hold changed blocks.
+   With one disk, no off-box copy and no git remote (§11 deferred by the Founder),
+   `lvcreate --snapshot` before a risky change is the closest thing to a backup
+   available here. `+100%FREE` removes that capability permanently in exchange
+   for space nothing is asking for.
+
+400 GB leaves ~360 GB free on `/` and ~550 GB of extents in reserve — far more
+headroom than the workload needs on either axis.
 
 **Neither command is on the sudo list, deliberately** — `lvextend` takes a device
 path, so a rule permitting it permits it against *any* volume. This is a one-time
@@ -53,6 +75,25 @@ Founder action, not an agent capability.
 
 Worth doing before it bites: 61 GB free, Ollama models are 5–7 GB each, and
 Paperclip carries an embedded Postgres whose data directory only grows.
+
+### Independently corroborated at the block layer, 2026-10-20 10:03
+
+The Founder ran `lsblk`, `sudo blkid` and `df -hT`. These read the *block* layer,
+where `vgs`/`lvs` read the LVM layer — so they are a genuine second opinion, not a
+restatement:
+
+- `lsblk` — one `nvme0n1` (953.9G). Three partitions, all accounted for. **No
+  second disk and no unmounted partition.**
+- `blkid` — exactly three filesystem signatures on the box: `nvme0n1p1` vfat,
+  `nvme0n1p2` ext4, `ubuntu--vg-ubuntu--lv` ext4. **Nothing holds a filesystem
+  inside the free extents**, so extending the LV cannot overwrite data.
+- `df -hT` — matches `/` at 98G / 61G avail.
+
+Also visible in that paste: `sudo blkid` **prompted for a password**. `blkid` is
+not on the granted list, so this is the scoping behaving as designed rather than a
+blanket NOPASSWD. Confirmed again when `sudo -n vgs -o vg_free` was refused — the
+rules pin exact arguments, so even an extra flag on a permitted command falls
+through to the password prompt.
 
 ---
 
