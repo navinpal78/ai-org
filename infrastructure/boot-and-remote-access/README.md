@@ -191,11 +191,22 @@ Port 3100 is served by a different process entirely. Its ancestry:
 
 ```
 sshd-session: baba [priv]
-  └─ sshd-session: baba@pts/4
+  └─ sshd-session: baba@pts/0
       └─ -bash
           └─ npm exec paperclipai run
-              └─ node /home/baba/.npm/_npx/43414d9b790239bb/.../paperclipai run   (pid 55438)
+              └─ node /home/baba/.npm/_npx/43414d9b790239bb/.../paperclipai run   (pid 133275)
 ```
+
+> **The pid and tty above changed between 2026-10-19 and 2026-10-20** — it was
+> pid 55438 on `pts/4`, it is now pid 133275 on `pts/0`, restarted by hand at
+> 08:29:51. **Do not take the specific numbers from this file.** Re-derive them:
+>
+> ```bash
+> ss -ltnp | grep 3100
+> ```
+>
+> That the numbers moved at all *is the symptom*: a service would have the same
+> identity across restarts and would not need a human to start it.
 
 **Paperclip is a foreground job in an interactive login shell.** When that SSH
 session ends — you close the window, the laptop sleeps, the Wi-Fi drops — the
@@ -207,8 +218,8 @@ This is strictly worse than the reboot problem that Amendment 1 fixed, because a
 reboot is something you choose and a dropped connection is not. On a headless box
 you reach only over the network, the failure also removes your means of noticing.
 
-**Until the cutover is run, treat the pts/4 SSH session as load-bearing. Do not
-close it.**
+**Until the cutover is run, treat the SSH session that holds port 3100 as
+load-bearing. Do not close it.** As of 2026-10-20 09:59 that is `pts/0`.
 
 ### The second problem: it is installed in a temp directory
 

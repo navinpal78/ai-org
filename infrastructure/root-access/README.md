@@ -4,6 +4,56 @@
 **Decision:** *"Give me a way to run specific root commands"* — chosen over doing
 each root action by hand, and over leaving the Ollama fix as a runtime-only hack.
 
+**Status: LIVE.** Run by the Founder at **08:27 on 2026-10-20** and independently
+verified at 09:59 — see *Verification* below. The script is idempotent and safe to
+re-run, but it does not need re-running.
+
+---
+
+## Verification, 2026-10-20 09:59
+
+| Check | Result |
+|---|---|
+| `/etc/sudoers.d/60-paperclip-agent` | present, `-r--r----- root:root`, 797 bytes |
+| `sudo -n -l` | lists `PC_DIAG` + `PC_OLLAMA`, no password prompt |
+| Live Ollama env (`systemctl show ollama -p Environment`) | **6 vars, `OLLAMA_KEEP_ALIVE=30m` present** |
+| `sudo -n vgs` unattended | returns volume groups, no TTY needed |
+| **End-to-end keep-alive** | loaded `qwen3.5:9b`, `ollama ps` → **`UNTIL: 29 minutes from now`** |
+
+That last row is the one that matters. Before the fix the same check read
+`UNTIL: 4 minutes from now` — the default 5-minute eviction. The fix is confirmed by
+behaviour, not just by configuration.
+
+---
+
+## The ~850 GB is now answered: it is genuinely free
+
+The first thing the grant bought:
+
+```
+vgs  →  ubuntu-vg   VSize <950.82g   VFree <850.82g
+lvs  →  ubuntu-lv   LSize 100.00g    (the only LV)
+df / →  98G size, 33G used, 61G avail, ext4
+```
+
+**Nothing is lost or hidden.** The installer created a 100 GB logical volume and
+left the remaining ~850 GB as *unallocated extents* in the volume group — the Ubuntu
+installer's default when you accept the LVM layout without dragging the size slider.
+
+It is reclaimable online, with no downtime and no unmount, because ext4 grows live:
+
+```bash
+sudo lvextend -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
+sudo resize2fs /dev/ubuntu-vg/ubuntu-lv
+```
+
+**Neither command is on the sudo list, deliberately** — `lvextend` takes a device
+path, so a rule permitting it permits it against *any* volume. This is a one-time
+Founder action, not an agent capability.
+
+Worth doing before it bites: 61 GB free, Ollama models are 5–7 GB each, and
+Paperclip carries an embedded Postgres whose data directory only grows.
+
 ---
 
 ## Run this once
@@ -53,7 +103,7 @@ to type a password into. The change is "unattended", not "more".
 
 | Command | Answers |
 |---|---|
-| `vgs` / `lvs` / `pvs` | The ~850 GB of this disk that is unaccounted for. The root volume is 100 GB of a 950 GB partition and nothing non-root can explain the rest. |
+| `vgs` / `lvs` / `pvs` | The ~850 GB of this disk that was unaccounted for. **Answered on day one** — see above: unallocated LVM extents, reclaimable. |
 | `dmidecode -t memory` | The RAM section of the spec review, which came back empty because `dmidecode` produced no output without root. |
 | `systemctl restart ollama` | Re-apply tuning after an Ollama config change without waiting for you. |
 
