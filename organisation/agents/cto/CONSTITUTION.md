@@ -31,7 +31,7 @@ As defined in `organisation/agents/cto/ROLE.md`:
 ## Model Configuration
 | Attribute | Value |
 |-----------|-------|
-| Model | qwen3.5:9b (`ollama/qwen3.5:9b`, served locally by Ollama on 127.0.0.1:11434) |
+| Model | qwen3.5:9b (`ollama/qwen3.5:9b`, served locally by Ollama on 127.0.0.1:41825) |
 | Strategy | LOCAL → HYBRID → EXTERNAL |
 | Selected by | `~/.config/opencode/opencode.json` (`"model": "ollama/qwen3.5:9b"`), reinforced by a `model:` pin in `.opencode/agents/cto.md` |
 | Known failure mode | If that config is not loaded, OpenCode silently falls back to a hosted free model and work leaves the machine. Verify the model name printed in the run header. |

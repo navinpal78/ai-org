@@ -160,7 +160,7 @@ correct. Same pattern as the Hermes false alarm — the surface reading was wron
 ```bash
 systemctl is-active ollama snap.tailscale.tailscaled.service ssh.socket
 systemctl --user is-active hermes-gateway opencode paperclip
-ss -lntp | grep -E '11434|49374|3100'
+ss -lntp | grep -E '41825|49374|3100'
 ```
 
 Expected: everything `active`, and all three ports listening on 127.0.0.1.
@@ -290,7 +290,7 @@ what to do if even that fails. Full transcript at `logs/paperclip-cutover-*.log`
 systemctl is-active ollama snap.tailscale.tailscaled.service ssh.socket
 systemctl --user is-active hermes-gateway opencode paperclipai   # note the new name
 systemctl --user is-enabled paperclip                            # expect: disabled
-ss -lntp | grep -E '11434|49374|3100'
+ss -lntp | grep -E '41825|49374|3100'
 ```
 
 Once you trust the new unit, delete the old file:
